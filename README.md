@@ -56,18 +56,13 @@ Located in `src/camera/camera/AgeGenderEmotionPrediction/models/`:
 
 Models stored via Git LFS due to file size constraints.
 
-## Dependencies
-
-### ROS2 Packages
-```bash
-sudo apt install ros-humble-cv-bridge ros-humble-sensor-msgs
-```
 
 ### Python Libraries
 Core dependencies (install via pip):
 ```bash
 pip install opencv-python torch torchvision numpy scipy
 pip install requests ultralytics
+#TODO add rest
 ```
 
 **Note:** Complete dependency list not available. Additional libraries may be required for neural network inference components.
@@ -152,7 +147,7 @@ Credentials configured in master node:
 ## Project Structure
 
 ```
-tvarometr_ws_SOTA/
+tvarometr_ws/
 ├── src/
 │   ├── camera/                    # Vision and inference package
 │   │   └── camera/
