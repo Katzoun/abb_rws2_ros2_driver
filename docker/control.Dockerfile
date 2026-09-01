@@ -19,10 +19,11 @@ COPY docker/requirements-control.txt /tmp/requirements-control.txt
 RUN pip3 install --no-cache-dir -r /tmp/requirements-control.txt
 
 WORKDIR /workspace
+COPY src/tvarometr_interfaces src/tvarometr_interfaces
 COPY src/master_pkg src/master_pkg
 
 RUN . /opt/ros/${ROS_DISTRO}/setup.sh \
-    && colcon build --symlink-install --packages-select master_pkg
+    && colcon build --symlink-install --packages-select tvarometr_interfaces master_pkg
 
 COPY docker/entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh

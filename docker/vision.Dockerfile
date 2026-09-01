@@ -39,6 +39,8 @@ RUN curl -sSL https://raw.githubusercontent.com/ros/rosdistro/master/ros.key \
         ros-humble-std-msgs \
         python3-colcon-common-extensions \
         python3-pip \
+        build-essential \
+        cmake \
         git \
         git-lfs \
         # opencv runtime libs
@@ -56,6 +58,7 @@ RUN pip3 install --no-cache-dir -r /tmp/requirements-vision.txt
 
 # --- Workspace source -----------------------------------------------------
 WORKDIR /workspace
+COPY src/tvarometr_interfaces src/tvarometr_interfaces
 COPY src/camera src/camera
 
 # Catch LFS pointer files before they end up baked into the image.
@@ -73,7 +76,7 @@ RUN for f in \
     done
 
 RUN . /opt/ros/${ROS_DISTRO}/setup.sh \
-    && colcon build --symlink-install --packages-select camera
+    && colcon build --symlink-install --packages-select tvarometr_interfaces camera
 
 COPY docker/entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
