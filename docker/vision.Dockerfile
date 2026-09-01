@@ -77,18 +77,6 @@ RUN for f in /opt/tvarometr/models/*; do \
 
 RUN . /opt/ros/${ROS_DISTRO}/setup.sh \
     && colcon build --symlink-install --packages-select tvarometr_interfaces tvarometr_inference
-# One line per interface package: name and a hash of its definitions. Images that
-# carry the same package have to agree on its hash - if they drift, nodes discover
-# each other but the messages between them are nonsense, which looks nothing like
-# the actual cause.
-RUN for pkg in src/*_msgs src/tvarometr_interfaces; do \
-        [ -d "$pkg" ] || continue; \
-        h=$(find "$pkg" -type f -name '*.msg' -o -type f -name '*.srv' \
-                -o -type f -name '*.action' | sort | xargs sha256sum \
-            | sha256sum | cut -c1-12); \
-        echo "$(basename $pkg) $h"; \
-    done > /etc/tvarometr_interfaces.sha
-
 
 COPY docker/ros-env.sh /ros-env.sh
 COPY docker/entrypoint.sh /entrypoint.sh

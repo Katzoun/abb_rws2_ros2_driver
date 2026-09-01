@@ -38,7 +38,7 @@ Image acquisition and neural network inference.
   - `/start_inference` (std_msgs/String): trigger from the master node
   - `/face_attributes` (std_msgs/String): JSON with age, gender and emotion
 
-#### `tvarometr_robot_control`
+#### `robot_control`
 The ABB robot driver, a managed node speaking Robot Web Services.
 - **Nodes:**
   - `robot_controller_node_exec`: RWS session, motion actions, joint states
@@ -116,7 +116,7 @@ be driven by hand:
 
 ```bash
 ros2 action send_goal /robot_controller/robot_robtarget_move \
-    tvarometr_robot_control_msgs/action/ExecutePoseArray \
+    robot_control_msgs/action/ExecutePoseArray \
     "{motion_command: MoveL, speed: '100', path: {poses: [...]}}"
 ```
 
@@ -153,14 +153,7 @@ That takes a couple of seconds instead of several minutes.
 **When you change something in `tvarometr_interfaces`, build both images** -
 `docker compose build` with no service name. Rebuilding only one leaves the
 other with the old definitions, and the containers then discover each other but
-cannot make sense of what the other sends, which does not look like the actual
-cause at all. Both images carry a fingerprint of the definitions they were built
-from and print it on startup, so a mismatch is one command away:
-
-```bash
-docker compose exec vision cat /etc/tvarometr_interfaces.sha
-docker compose exec control cat /etc/tvarometr_interfaces.sha
-```
+cannot make sense of what the other sends.
 
 In the mounted dev setup the same applies inside the containers - rebuild
 `tvarometr_interfaces` in both, not just the one you are working on.
@@ -220,10 +213,10 @@ tvarometr_ws/
 │   │       ├── inference_node.py
 │   │       └── vendor/            # MiVOLO and ResEmoteNet, vendored as-is
 │   ├── tvarometr_interfaces/      # msg/srv/action definitions
-│   ├── tvarometr_robot_control_msgs/  # driver msg/srv/action definitions
-│   ├── tvarometr_robot_control/   # ABB robot driver, managed node (RWS)
+│   ├── robot_control_msgs/  # driver msg/srv/action definitions
+│   ├── robot_control/   # ABB robot driver, managed node (RWS)
 │   │   ├── launch/robot_control.launch.py
-│   │   └── tvarometr_robot_control/
+│   │   └── robot_control/
 │   │       ├── robot_controller_node.py
 │   │       └── rws/               # HTTP client, RWS calls, sim stand-in
 │   └── master_pkg/                # Pre-rebuild system, reference only

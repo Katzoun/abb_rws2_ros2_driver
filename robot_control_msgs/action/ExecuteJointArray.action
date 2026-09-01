@@ -1,0 +1,11 @@
+# Same as ExecutePoseArray but in joint space (MoveAbsJ/MoveAbsL).
+string motion_command
+string speed
+robot_control_msgs/RobotJoints[] waypoints
+---
+bool success
+string message
+int32 executed_count
+---
+int32 current_index
+string state

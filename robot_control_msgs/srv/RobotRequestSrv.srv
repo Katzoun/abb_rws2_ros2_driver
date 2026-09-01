@@ -1,0 +1,9 @@
+# Calls a method on the RWS interface by name. Keeps the ROS side free of a
+# bespoke service per robot operation - make_robot_ready, run_rapid_routine,
+# run_move_command, set_speedratio and the rest all come through here.
+string command
+string[] params
+---
+bool status
+string message
+int32 status_code

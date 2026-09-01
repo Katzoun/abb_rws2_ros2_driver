@@ -1,0 +1,14 @@
+# Streams a cartesian path to the robot over the DIPC queue, one robtarget at a
+# time. motion_command picks the RAPID routine (MoveL/MoveJ), speed is passed
+# through as the RAPID speed value.
+string motion_command
+string speed
+geometry_msgs/PoseArray path
+---
+bool success
+string message
+int32 executed_count
+---
+int32 current_index
+geometry_msgs/PoseStamped current_pose
+string state
