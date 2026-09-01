@@ -38,16 +38,22 @@ Image acquisition and neural network inference.
   - `/start_inference` (std_msgs/String): trigger from the master node
   - `/face_attributes` (std_msgs/String): JSON with age, gender and emotion
 
-#### `master_pkg`
-Orchestrates system state machine and robot communication.
+#### `tvarometr_robot_control`
+The ABB robot driver, a managed node speaking Robot Web Services.
 - **Nodes:**
-  - `master_node`: State machine controller, RWS client, trajectory generator
+  - `robot_controller_node_exec`: RWS session, motion actions, joint states
 
-- **Features:**
-  - State machine for process workflow
-  - ABB Robot Web Services (RWS 2.0) client
-  - Path generation and RAPID code generation
-  - Trajectory optimization for robot execution
+- **Interfaces:**
+  - `robot_robtarget_move` / `robot_jointtarget_move` (actions): stream a path
+    into the RAPID buffer queue over DIPC
+  - `controller_request` (service): call an RWS method by name
+  - `joint_states` (sensor_msgs/JointState): the robot pose while active
+
+#### `master_pkg` (reference only)
+The pre-rebuild system: state machine, its own RWS client, path generation and
+the turtlesim preview. **Not built into any container** - it is kept in the repo
+as the reference for reimplementing the orchestrator, and it no longer runs as
+part of the stack.
 
 ### Neural Network Models
 
@@ -90,15 +96,28 @@ docker compose build
 docker compose up
 ```
 
-`USE_RWS=false` in `.env` (the default) runs the turtlesim preview instead of
-talking to a real robot.
+`ROBOT_BACKEND=sim` in `.env` (the default) runs the driver's stand-in
+controller, which accepts every motion goal and keeps the targets it was sent.
+`rws` talks to a real or virtual ABB controller.
 
-Keyboard control (s/r/q/e) runs as its own process with its own terminal, the
-same way the bare-metal setup did - start it in a second terminal once the stack
-is up:
+The control container now runs the robot driver on its own. It is a managed
+node, so it comes up unconfigured and does nothing until it is driven through
+the lifecycle:
 
 ```bash
-docker exec -it tvarometr_control ros2 run master_pkg keyboard_publisher_exec
+docker exec tvarometr_control ros2 lifecycle set /robot_controller configure
+docker exec tvarometr_control ros2 lifecycle set /robot_controller activate
+```
+
+**There is no orchestrator yet.** `master_pkg` used to be it, and it is no
+longer part of any container - it stays in the repo purely as the reference to
+reimplement from. Until the BehaviorTree orchestrator exists, the driver has to
+be driven by hand:
+
+```bash
+ros2 action send_goal /robot_controller/robot_robtarget_move \
+    tvarometr_robot_control_msgs/action/ExecutePoseArray \
+    "{motion_command: MoveL, speed: '100', path: {poses: [...]}}"
 ```
 
 **Note:** the vision container needs a native Docker Engine (not Docker Desktop,
@@ -113,9 +132,21 @@ Rebuilding the image for every edit is slow. Copy
 to mount the workspace source into the containers, then rebuild in place:
 
 ```bash
-docker compose exec vision bash -lc "cd /workspace && colcon build --packages-select tvarometr_inference"
+docker compose exec vision bash -lc \
+  "cd /workspace && colcon build --packages-select tvarometr_inference"
 docker compose restart vision
 ```
+
+Every Bash shell in either image sources the ROS distribution and the workspace
+automatically. For example, the development control shell is simply:
+
+```bash
+docker compose exec control bash
+```
+
+The shared setup lives in `docker/ros-env.sh`; the image entrypoint and Bash's
+startup files both use it, so interactive and scripted `bash` invocations see
+the same environment.
 
 That takes a couple of seconds instead of several minutes.
 
@@ -134,7 +165,10 @@ docker compose exec control cat /etc/tvarometr_interfaces.sha
 In the mounted dev setup the same applies inside the containers - rebuild
 `tvarometr_interfaces` in both, not just the one you are working on.
 
-### Bare-metal (legacy)
+### Bare-metal (legacy, pre-rebuild)
+
+This runs the old `master_pkg` pipeline outside Docker. Kept for reference -
+the containers no longer carry `master_pkg`.
 
 1. Clone repository:
 ```bash
@@ -168,11 +202,11 @@ ros2 run master_pkg keyboard_publisher_exec          # terminal 3
 ### Robot Configuration
 
 Address and credentials come from `.env` (see `.env.example`) and are passed to
-the master node as ROS parameters - `robot_ip`, `robot_port`, `robot_username`,
-`robot_password`. The virtual controller usually listens on port 80, the
+the driver as ROS parameters - `connection.ip_address`, `connection.port`,
+`connection.username`, `connection.password`. The virtual controller usually listens on port 80, the
 physical one on 443.
 
-Running without a robot at all: `USE_RWS=false`.
+Running without a robot at all: `ROBOT_BACKEND=sim`.
 
 ## Project Structure
 
@@ -186,9 +220,13 @@ tvarometr_ws/
 │   │       ├── inference_node.py
 │   │       └── vendor/            # MiVOLO and ResEmoteNet, vendored as-is
 │   ├── tvarometr_interfaces/      # msg/srv/action definitions
-│   ├── tvarometr_core/            # Managed-node base class, shared constants
-│   ├── tvarometr_robot_control/   # ABB controller node (RWS)
-│   └── master_pkg/                # Control and coordination package
+│   ├── tvarometr_robot_control_msgs/  # driver msg/srv/action definitions
+│   ├── tvarometr_robot_control/   # ABB robot driver, managed node (RWS)
+│   │   ├── launch/robot_control.launch.py
+│   │   └── tvarometr_robot_control/
+│   │       ├── robot_controller_node.py
+│   │       └── rws/               # HTTP client, RWS calls, sim stand-in
+│   └── master_pkg/                # Pre-rebuild system, reference only
 │       ├── launch/control.launch.py
 │       └── master_pkg/
 │           ├── master.py

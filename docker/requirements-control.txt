@@ -1,3 +1,2 @@
-# Python dependencies for the CPU control container (master node, RWS client,
-# path generation, keyboard input, turtle simulator preview).
+# Python dependencies for the CPU control container (the RWS robot driver).
 requests

@@ -12,6 +12,7 @@ FROM nvidia/cuda:12.1.1-base-ubuntu22.04
 ENV DEBIAN_FRONTEND=noninteractive \
     ROS_DISTRO=humble \
     LANG=en_US.UTF-8 \
+    BASH_ENV=/ros-env.sh \
     # ultralytics pip-installs missing deps on first model load, which is no use
     # at an event with no network. Better to fail the build than discover it there.
     YOLO_AUTOINSTALL=false \
@@ -89,8 +90,10 @@ RUN for pkg in src/*_msgs src/tvarometr_interfaces; do \
     done > /etc/tvarometr_interfaces.sha
 
 
+COPY docker/ros-env.sh /ros-env.sh
 COPY docker/entrypoint.sh /entrypoint.sh
-RUN chmod +x /entrypoint.sh
+RUN chmod +x /entrypoint.sh /ros-env.sh \
+    && echo 'source /ros-env.sh' >> /root/.bashrc
 
 ENTRYPOINT ["/entrypoint.sh"]
 CMD ["ros2", "launch", "tvarometr_inference", "vision.launch.py"]

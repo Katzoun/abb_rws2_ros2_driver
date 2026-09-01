@@ -1,11 +1,7 @@
 #!/bin/bash
 set -e
 
-source "/opt/ros/${ROS_DISTRO:-humble}/setup.bash"
-
-if [ -f /workspace/install/setup.bash ]; then
-    source /workspace/install/setup.bash
-fi
+source /ros-env.sh
 
 # Interface packages this image was built with. Where two containers carry the
 # same package the hashes have to match - if one image was rebuilt without the
