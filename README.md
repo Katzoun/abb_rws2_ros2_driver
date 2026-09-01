@@ -117,6 +117,21 @@ docker compose restart vision
 
 That takes a couple of seconds instead of several minutes.
 
+**When you change something in `tvarometr_interfaces`, build both images** -
+`docker compose build` with no service name. Rebuilding only one leaves the
+other with the old definitions, and the containers then discover each other but
+cannot make sense of what the other sends, which does not look like the actual
+cause at all. Both images carry a fingerprint of the definitions they were built
+from and print it on startup, so a mismatch is one command away:
+
+```bash
+docker compose exec vision cat /etc/tvarometr_interfaces.sha
+docker compose exec control cat /etc/tvarometr_interfaces.sha
+```
+
+In the mounted dev setup the same applies inside the containers - rebuild
+`tvarometr_interfaces` in both, not just the one you are working on.
+
 ### Bare-metal (legacy)
 
 1. Clone repository:
