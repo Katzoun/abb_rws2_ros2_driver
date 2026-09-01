@@ -58,22 +58,57 @@ Models stored via Git LFS due to file size constraints.
 
 
 ### Python Libraries
-Core dependencies (install via pip):
+
+Pinned in `docker/requirements-vision.txt` (inference) and
+`docker/requirements-control.txt` (robot control). A few of those pins are
+load-bearing - the files explain which and why.
+
+## Installation & Usage
+
+> The project is being rebuilt on branch `rebuild-docker-bt` towards a fully
+> Dockerized system with a BehaviorTree.CPP orchestrator, replacing the setup
+> below. See the plan for details. This README still describes the current
+> (pre-rebuild) system.
+
+### Docker (recommended, Phase 1 of the rebuild)
+
+Runs the existing system unchanged in two containers (GPU vision, CPU control) -
+no host ROS2 install required beyond Docker + the NVIDIA Container Toolkit.
+
 ```bash
-pip install opencv-python torch torchvision numpy scipy
-pip install requests ultralytics
-#TODO add rest
+cd ~
+git clone https://github.com/Katzoun/tvarometr_ws.git
+cd tvarometr_ws
+git lfs install && git lfs pull   # required before building the vision image
+
+cp .env.example .env              # edit robot credentials / device settings
+docker compose build
+docker compose up
 ```
 
-**Note:** Complete dependency list not available. Additional libraries may be required for neural network inference components.
+`USE_RWS=false` in `.env` (the default) runs the turtlesim preview instead of
+talking to a real robot.
 
-## Installation
+Keyboard control (s/r/q/e) runs as its own process with its own terminal, the
+same way the bare-metal setup did - start it in a second terminal once the stack
+is up:
+
+```bash
+docker exec -it tvarometr_control ros2 run master_pkg keyboard_publisher_exec
+```
+
+**Note:** the vision container needs a native Docker Engine (not Docker Desktop,
+which runs containers in a VM and cannot pass through the host GPU on Linux) plus
+the NVIDIA Container Toolkit. Check with `docker context ls` that the `default`
+context is active.
+
+### Bare-metal (legacy)
 
 1. Clone repository:
 ```bash
 cd ~
-git clone https://github.com/Katzoun/tvarometr_ws_SOTA.git
-cd tvarometr_ws_SOTA
+git clone https://github.com/Katzoun/tvarometr_ws.git
+cd tvarometr_ws
 ```
 
 2. Install Git LFS and pull models:
@@ -88,61 +123,29 @@ colcon build
 source install/setup.bash
 ```
 
-## Usage
-
-### Launch System
-
-**Simulation Mode:**
-```bash
-ros2 launch master_pkg tvarometr_sim.launch.py
-```
-
-**Full System:**
+4. Launch:
 ```bash
 source install/setup.bash
 ros2 launch master_pkg tvarometr_system.launch.py
 ```
 
-### Manual Node Execution
-
-Terminal 1 - Camera and inference:
+Or run each node manually in separate terminals:
 ```bash
 ros2 run camera camera_node_exec
-```
-
-Terminal 2 - Inference node:
-```bash
 ros2 run camera inference_node_exec
-```
-
-Terminal 3 - Master controller:
-```bash
 ros2 run master_pkg master_node_exec
-```
-Terminal 4 - Keyboard interface to control the pipeline:
-```bash
 ros2 run master_pkg keyboard_publisher_exec
 ```
 
 
 ### Robot Configuration
 
-Edit robot IP address in `src/master_pkg/master_pkg/master.py`:
-```python
-# Simulation
-robotIP = "192.168.0.30"
-robot_port = 80
+Address and credentials come from `.env` (see `.env.example`) and are passed to
+the master node as ROS parameters - `robot_ip`, `robot_port`, `robot_username`,
+`robot_password`. The virtual controller usually listens on port 80, the
+physical one on 443.
 
-# Physical robot
-robotIP = "192.168.0.37"
-robot_port = 443
-```
-## Configuration
-
-### RWS Connection
-Credentials configured in master node:
-- Username: `Admin`
-- Password: `robotics`
+Running without a robot at all: `USE_RWS=false`.
 
 ## Project Structure
 
@@ -150,6 +153,8 @@ Credentials configured in master node:
 tvarometr_ws/
 ├── src/
 │   ├── camera/                    # Vision and inference package
+│   │   ├── launch/
+│   │   │   └── vision.launch.py   # camera + inference (vision container)
 │   │   └── camera/
 │   │       ├── camera_controller.py
 │   │       └── AgeGenderEmotionPrediction/
@@ -158,6 +163,7 @@ tvarometr_ws/
 │   │           └── models/         # Neural network weights (Git LFS)
 │   └── master_pkg/                # Control and coordination package
 │       ├── launch/
+│       │   ├── control.launch.py  # master + turtle preview (control container)
 │       │   └── tvarometr_system.launch.py
 │       └── master_pkg/
 │           ├── master.py
@@ -166,9 +172,9 @@ tvarometr_ws/
 │               ├── rwsprovider.py
 │               ├── rwswrappers.py
 │               └── path_generator_multiline.py
-├── build/                         # Colcon build artifacts
-├── install/                       # Installation directory
-└── log/                          # Build and runtime logs
+├── docker/                        # Dockerfiles, pinned requirements, entrypoint
+├── docker-compose.yml
+└── .env.example
 ```
 
 ## Technical Details
@@ -192,10 +198,6 @@ Multi-line trajectory generator creates robot-executable paths based on face ana
 colcon build --packages-select camera master_pkg
 source install/setup.bash
 ```
-## Known Issues
-
-- Complete Python dependency list not documented
-
 ## Institution
 
 Developed at Brno University of Technology (BUT)  

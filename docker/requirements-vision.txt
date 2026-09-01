@@ -1,0 +1,30 @@
+# Python deps for the GPU vision container (camera capture + inference).
+#
+# torch/torchvision stay on cu121. Before bumping them, check that
+# torch.cuda.get_arch_list() still covers both machines we run on:
+#   RTX 3080 (deployment) = sm_86, GTX 1080 (dev) = sm_61, runs the sm_60 kernels.
+# torch >= 2.6 dropped Pascal, and it breaks at inference time rather than at
+# import - torch.cuda.is_available() still returns True on the 1080.
+#
+# The +cu121 suffix is load-bearing: a bare version pin resolves to the PyPI
+# wheel (a different CUDA build) instead of this one.
+--extra-index-url https://download.pytorch.org/whl/cu121
+
+torch==2.5.1+cu121
+torchvision==0.20.1+cu121
+
+numpy
+opencv-python
+pillow
+scipy
+pandas
+tqdm
+ultralytics
+
+# The yolov8x checkpoint needs omegaconf, but ultralytics doesn't declare it and
+# just pip-installs it on first load. We turn that off, so it has to be here.
+omegaconf
+
+# The vendored MiVOLO code imports timm internals that later versions renamed -
+# remap_checkpoint is gone from 0.9.x on. Same pin MiVOLO upstream uses.
+timm==0.8.13.dev0
