@@ -59,14 +59,13 @@ RUN pip3 install --no-cache-dir -r /tmp/requirements-vision.txt
 # --- Workspace source -----------------------------------------------------
 WORKDIR /workspace
 COPY src/tvarometr_interfaces src/tvarometr_interfaces
-COPY src/camera src/camera
+COPY src/tvarometr_inference src/tvarometr_inference
+
+# Weights are kept out of the source tree - see models/ in the repo root.
+COPY models /opt/tvarometr/models
 
 # Catch LFS pointer files before they end up baked into the image.
-RUN for f in \
-        src/camera/camera/AgeGenderEmotionPrediction/models/yolov8x_person_face.pt \
-        src/camera/camera/AgeGenderEmotionPrediction/models/model_imdb_cross_person_4.22_99.46.pth.tar \
-        src/camera/camera/AgeGenderEmotionPrediction/models/affectnet7_model.pth; \
-    do \
+RUN for f in /opt/tvarometr/models/*; do \
         size=$(stat -c%s "$f" 2>/dev/null || echo 0); \
         if [ "$size" -lt 1000000 ]; then \
             echo "ERROR: $f is only ${size} bytes - looks like a Git LFS pointer, not the real weight file." >&2; \
@@ -76,7 +75,7 @@ RUN for f in \
     done
 
 RUN . /opt/ros/${ROS_DISTRO}/setup.sh \
-    && colcon build --symlink-install --packages-select tvarometr_interfaces camera
+    && colcon build --symlink-install --packages-select tvarometr_interfaces tvarometr_inference
 # Fingerprint of the interface definitions this image was built from. Both
 # images have to agree on it - if they drift, nodes discover each other but the
 # messages between them are nonsense, which looks nothing like the actual cause.
@@ -89,4 +88,4 @@ COPY docker/entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
 
 ENTRYPOINT ["/entrypoint.sh"]
-CMD ["ros2", "launch", "camera", "vision.launch.py"]
+CMD ["ros2", "launch", "tvarometr_inference", "vision.launch.py"]

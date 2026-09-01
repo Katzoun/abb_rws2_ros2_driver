@@ -25,7 +25,7 @@ This ROS2 system integrates webcam capture, deep learning inference, and industr
 
 ### ROS2 Packages
 
-#### `camera`
+#### `tvarometr_inference`
 Image acquisition and neural network inference.
 - **Nodes:**
   - `usb_cam` (from the `usb_cam` package): streams the webcam, configured in
@@ -51,7 +51,9 @@ Orchestrates system state machine and robot communication.
 
 ### Neural Network Models
 
-Located in `src/camera/camera/AgeGenderEmotionPrediction/models/`:
+Kept in `models/` at the repo root, out of the source tree - they are half a
+gigabyte between them. The inference node takes a `models_dir` parameter
+(`/opt/tvarometr/models` inside the container):
 - `yolov8x_person_face.pt`: Face detection (YOLOv8)
 - `model_imdb_cross_person_4.22_99.46.pth.tar`: Age estimation
 - `affectnet7_model.pth`: Emotion classification
@@ -111,7 +113,7 @@ Rebuilding the image for every edit is slow. Copy
 to mount the workspace source into the containers, then rebuild in place:
 
 ```bash
-docker compose exec vision bash -lc "cd /workspace && colcon build --packages-select camera"
+docker compose exec vision bash -lc "cd /workspace && colcon build --packages-select tvarometr_inference"
 docker compose restart vision
 ```
 
@@ -156,7 +158,8 @@ source install/setup.bash
 4. Launch (needs `ros-humble-usb-cam` installed as well):
 ```bash
 source install/setup.bash
-ros2 launch camera vision.launch.py device:=cuda:0   # terminal 1
+ros2 launch tvarometr_inference vision.launch.py \
+    device:=cuda:0 models_dir:=$PWD/models              # terminal 1
 ros2 launch master_pkg control.launch.py             # terminal 2
 ros2 run master_pkg keyboard_publisher_exec          # terminal 3
 ```
@@ -176,19 +179,17 @@ Running without a robot at all: `USE_RWS=false`.
 ```
 tvarometr_ws/
 ├── src/
-│   ├── camera/                    # Vision and inference package
-│   │   ├── launch/
-│   │   │   └── vision.launch.py   # usb_cam + inference (vision container)
-│   │   ├── config/
-│   │   │   └── usb_cam.yaml       # resolution, framerate, device path
-│   │   └── camera/
-│   │       └── AgeGenderEmotionPrediction/
-│   │           ├── face_attributes_node.py
-│   │           ├── predict.py
-│   │           └── models/         # Neural network weights (Git LFS)
+│   ├── tvarometr_inference/       # Camera + the three networks (GPU container)
+│   │   ├── launch/vision.launch.py
+│   │   ├── config/usb_cam.yaml    # resolution, framerate, device path
+│   │   └── tvarometr_inference/
+│   │       ├── inference_node.py
+│   │       └── vendor/            # MiVOLO and ResEmoteNet, vendored as-is
+│   ├── tvarometr_interfaces/      # msg/srv/action definitions
+│   ├── tvarometr_core/            # Managed-node base class, shared constants
+│   ├── tvarometr_robot_control/   # ABB controller node (RWS)
 │   └── master_pkg/                # Control and coordination package
-│       ├── launch/
-│       │   └── control.launch.py  # master + turtle preview (control container)
+│       ├── launch/control.launch.py
 │       └── master_pkg/
 │           ├── master.py
 │           └── utils/
@@ -196,6 +197,7 @@ tvarometr_ws/
 │               ├── rwsprovider.py
 │               ├── rwswrappers.py
 │               └── path_generator_multiline.py
+├── models/                        # Network weights, Git LFS
 ├── docker/                        # Dockerfiles, pinned requirements, entrypoint
 ├── docker-compose.yml
 └── .env.example
@@ -219,7 +221,7 @@ Multi-line trajectory generator creates robot-executable paths based on face ana
 
 ### Building
 ```bash
-colcon build --packages-select camera master_pkg
+colcon build
 source install/setup.bash
 ```
 ## Institution
