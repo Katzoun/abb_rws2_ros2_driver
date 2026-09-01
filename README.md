@@ -26,15 +26,17 @@ This ROS2 system integrates webcam capture, deep learning inference, and industr
 ### ROS2 Packages
 
 #### `camera`
-Handles image acquisition and neural network inference.
+Image acquisition and neural network inference.
 - **Nodes:**
-  - `camera_node_exec`: Captures frames from webcam, publishes on `/input_image` topic
-  - `inference_node_exec`: Runs deep learning models for face attribute prediction
+  - `usb_cam` (from the `usb_cam` package): streams the webcam, configured in
+    `config/usb_cam.yaml`
+  - `inference_node_exec`: keeps the newest frame and runs the models when
+    triggered
 
 - **Topics:**
-  - `/start_inference` (std_msgs/String): Trigger for image capture
-  - `/input_image` (sensor_msgs/Image): Raw camera frames
-  - `/inference_result` (custom): Face analysis results (age, gender, emotion)
+  - `/image_raw` (sensor_msgs/Image): camera stream
+  - `/start_inference` (std_msgs/String): trigger from the master node
+  - `/face_attributes` (std_msgs/String): JSON with age, gender and emotion
 
 #### `master_pkg`
 Orchestrates system state machine and robot communication.
@@ -102,6 +104,19 @@ which runs containers in a VM and cannot pass through the host GPU on Linux) plu
 the NVIDIA Container Toolkit. Check with `docker context ls` that the `default`
 context is active.
 
+### Working on the code
+
+Rebuilding the image for every edit is slow. Copy
+`docker-compose.override.yml.example` to `docker-compose.override.yml` (git-ignored)
+to mount the workspace source into the containers, then rebuild in place:
+
+```bash
+docker compose exec vision bash -lc "cd /workspace && colcon build --packages-select camera"
+docker compose restart vision
+```
+
+That takes a couple of seconds instead of several minutes.
+
 ### Bare-metal (legacy)
 
 1. Clone repository:
@@ -123,18 +138,12 @@ colcon build
 source install/setup.bash
 ```
 
-4. Launch:
+4. Launch (needs `ros-humble-usb-cam` installed as well):
 ```bash
 source install/setup.bash
-ros2 launch master_pkg tvarometr_system.launch.py
-```
-
-Or run each node manually in separate terminals:
-```bash
-ros2 run camera camera_node_exec
-ros2 run camera inference_node_exec
-ros2 run master_pkg master_node_exec
-ros2 run master_pkg keyboard_publisher_exec
+ros2 launch camera vision.launch.py device:=cuda:0   # terminal 1
+ros2 launch master_pkg control.launch.py             # terminal 2
+ros2 run master_pkg keyboard_publisher_exec          # terminal 3
 ```
 
 
@@ -154,17 +163,17 @@ tvarometr_ws/
 ├── src/
 │   ├── camera/                    # Vision and inference package
 │   │   ├── launch/
-│   │   │   └── vision.launch.py   # camera + inference (vision container)
+│   │   │   └── vision.launch.py   # usb_cam + inference (vision container)
+│   │   ├── config/
+│   │   │   └── usb_cam.yaml       # resolution, framerate, device path
 │   │   └── camera/
-│   │       ├── camera_controller.py
 │   │       └── AgeGenderEmotionPrediction/
 │   │           ├── face_attributes_node.py
 │   │           ├── predict.py
 │   │           └── models/         # Neural network weights (Git LFS)
 │   └── master_pkg/                # Control and coordination package
 │       ├── launch/
-│       │   ├── control.launch.py  # master + turtle preview (control container)
-│       │   └── tvarometr_system.launch.py
+│       │   └── control.launch.py  # master + turtle preview (control container)
 │       └── master_pkg/
 │           ├── master.py
 │           └── utils/

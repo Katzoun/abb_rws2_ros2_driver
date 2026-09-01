@@ -33,6 +33,7 @@ RUN curl -sSL https://raw.githubusercontent.com/ros/rosdistro/master/ros.key \
     && apt-get update && apt-get install -y --no-install-recommends \
         ros-humble-ros-base \
         ros-humble-cv-bridge \
+        ros-humble-usb-cam \
         ros-humble-sensor-msgs \
         ros-humble-geometry-msgs \
         ros-humble-std-msgs \
@@ -40,8 +41,8 @@ RUN curl -sSL https://raw.githubusercontent.com/ros/rosdistro/master/ros.key \
         python3-pip \
         git \
         git-lfs \
-        # opencv-python (non-headless, for the current cv2.imshow preview) runtime libs
-        libgl1 libglib2.0-0 libsm6 libxext6 libxrender1 libgomp1 \
+        # opencv runtime libs
+        libgl1 libglib2.0-0 libgomp1 \
     && rm -rf /var/lib/apt/lists/*
 
 # --- Python dependencies -------------------------------------------------

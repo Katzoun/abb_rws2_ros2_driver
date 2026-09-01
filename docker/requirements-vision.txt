@@ -13,8 +13,11 @@
 torch==2.5.1+cu121
 torchvision==0.20.1+cu121
 
-numpy
-opencv-python
+# Has to stay on 1.x: cv_bridge and the other ROS Humble python modules come
+# from apt built against numpy 1, and under numpy 2 they throw
+# "AttributeError: _ARRAY_API not found" the moment you convert an image.
+numpy<2
+opencv-python-headless
 pillow
 scipy
 pandas
