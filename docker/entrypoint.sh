@@ -7,10 +7,13 @@ if [ -f /workspace/install/setup.bash ]; then
     source /workspace/install/setup.bash
 fi
 
-# Both containers print this. If the two ever differ, one of the images was
-# rebuilt without the other and the nodes will talk past each other.
+# Interface packages this image was built with. Where two containers carry the
+# same package the hashes have to match - if one image was rebuilt without the
+# other, the nodes discover each other and then talk past each other.
 if [ -f /etc/tvarometr_interfaces.sha ]; then
-    echo "tvarometr_interfaces: $(cat /etc/tvarometr_interfaces.sha)"
+    while read -r pkg hash; do
+        echo "interfaces: $pkg $hash"
+    done < /etc/tvarometr_interfaces.sha
 fi
 
 exec "$@"

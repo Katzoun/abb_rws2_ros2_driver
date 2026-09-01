@@ -19,19 +19,23 @@ COPY docker/requirements-control.txt /tmp/requirements-control.txt
 RUN pip3 install --no-cache-dir -r /tmp/requirements-control.txt
 
 WORKDIR /workspace
-COPY src/tvarometr_interfaces src/tvarometr_interfaces
-COPY src/tvarometr_core src/tvarometr_core
+COPY src/tvarometr_robot_control_msgs src/tvarometr_robot_control_msgs
 COPY src/tvarometr_robot_control src/tvarometr_robot_control
 COPY src/master_pkg src/master_pkg
 
 RUN . /opt/ros/${ROS_DISTRO}/setup.sh \
-    && colcon build --symlink-install --packages-select tvarometr_interfaces tvarometr_core tvarometr_robot_control master_pkg
-# Fingerprint of the interface definitions this image was built from. Both
-# images have to agree on it - if they drift, nodes discover each other but the
-# messages between them are nonsense, which looks nothing like the actual cause.
-RUN find src/tvarometr_interfaces -type f -name '*.msg' \
-         -o -type f -name '*.srv' -o -type f -name '*.action' \
-    | sort | xargs sha256sum | sha256sum | cut -c1-12 > /etc/tvarometr_interfaces.sha
+    && colcon build --symlink-install --packages-select tvarometr_robot_control_msgs tvarometr_robot_control master_pkg
+# One line per interface package: name and a hash of its definitions. Images that
+# carry the same package have to agree on its hash - if they drift, nodes discover
+# each other but the messages between them are nonsense, which looks nothing like
+# the actual cause.
+RUN for pkg in src/*_msgs src/tvarometr_interfaces; do \
+        [ -d "$pkg" ] || continue; \
+        h=$(find "$pkg" -type f -name '*.msg' -o -type f -name '*.srv' \
+                -o -type f -name '*.action' | sort | xargs sha256sum \
+            | sha256sum | cut -c1-12); \
+        echo "$(basename $pkg) $h"; \
+    done > /etc/tvarometr_interfaces.sha
 
 
 COPY docker/entrypoint.sh /entrypoint.sh

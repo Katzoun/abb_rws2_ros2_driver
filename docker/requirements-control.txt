@@ -1,4 +1,3 @@
 # Python dependencies for the CPU control container (master node, RWS client,
 # path generation, keyboard input, turtle simulator preview).
 requests
-Hershey-Fonts
