@@ -12,6 +12,8 @@ import json
 import re
 import time
 
+from robot_control.constants import RapidConfig, RoutineNames
+
 
 class SimulatedRWS:
     """Answers like RWSInterface does: (message, http_status) tuples."""
@@ -21,8 +23,13 @@ class SimulatedRWS:
     # simulation that returned idle immediately would hide every race.
     ROUTINE_DURATION_S = 1.5
 
-    def __init__(self, host=None, username=None, password=None, port=None, logger=None):
+    def __init__(self, host=None, username=None, password=None, port=None, logger=None,
+                 timeout_s=None, rapid=None, routines=None):
         self.logger = logger
+        # Same configuration surface as RWSInterface, so the node can build
+        # either one without caring which it got.
+        self.rapid = rapid if rapid is not None else RapidConfig()
+        self.routines = routines if routines is not None else RoutineNames()
         self._logged_in = False
         self._busy_until = 0.0
         self._symbols = {}
@@ -59,15 +66,16 @@ class SimulatedRWS:
     def is_rapid_idle(self):
         return time.monotonic() >= self._busy_until
 
-    def get_rapid_symbol(self, symbol_name, module_name, task_name="T_ROB1"):
-        if symbol_name == "current_state":
-            return ("0" if self.is_rapid_idle() else "2", 200)
+    def get_rapid_symbol(self, symbol_name, module_name):
+        if symbol_name == self.rapid.symbol_current_state:
+            return (self.rapid.state_idle if self.is_rapid_idle() else self.rapid.state_execute, 200)
         return (self._symbols.get((symbol_name, module_name), ""), 200)
 
-    def get_robot_joint_positions(self, mechunit_name="ROB_1", num_ax=6):
+    def get_robot_joint_positions(self):
         # A plausible resting pose; enough for anything watching joint states.
-        joints = {f"rax_{i}": v for i, v in
-                  enumerate([0.0, -20.0, 30.0, 0.0, 70.0, 0.0], start=1)}
+        resting = [0.0, -20.0, 30.0, 0.0, 70.0, 0.0]
+        joints = {f"rax_{i+1}": (resting[i] if i < len(resting) else 0.0)
+                  for i in range(self.rapid.num_axes)}
         return (json.dumps(joints), 200)
 
     def get_controller_state(self):
@@ -81,52 +89,52 @@ class SimulatedRWS:
 
     # ---- commands ----
 
-    def set_rapid_symbol_raw(self, value, symbol_name, module_name, task_name="T_ROB1"):
+    def set_rapid_symbol_raw(self, value, symbol_name, module_name) -> None:
         self._symbols[(symbol_name, module_name)] = value
-        if symbol_name == "current_state" and str(value).strip('"') == "2":
+        if symbol_name == self.rapid.symbol_current_state and str(value).strip('"') == self.rapid.state_execute:
             self._busy_until = time.monotonic() + self.ROUTINE_DURATION_S
             self._log(f"running routine {self._routine!r}")
-        if symbol_name == "routine_name_input":
+        if symbol_name == self.rapid.symbol_routine_name:
             self._routine = str(value).strip('"')
-        return ("OK", 200)
 
-    def send_dipc_message(self, message, userdef="1", queue_name="RMQ_T_ROB1"):
+    def send_dipc_message(self, message, userdef="1"):
         self.received.append({"message": message, "userdef": userdef})
         if userdef == "2":
             self._log(f"last point of the path ({len(self.received)} in total)")
-        return ("OK", 204)
+        return True
 
     def make_robot_ready(self):
         self._log("robot ready")
-        return ("Robot set up correctly", 200)
+        return "Robot set up correctly"
 
-    def run_rapid_routine(self, routine_name):
+    def run_rapid_routine(self, routine_name) -> None:
         self._routine = routine_name
         self._busy_until = time.monotonic() + self.ROUTINE_DURATION_S
         self._log(f"routine {routine_name}")
-        return ("OK", 200)
 
     def run_move_command(self, motion_command, robtarget, speed):
         self.received.append({"message": robtarget, "motion": motion_command, "speed": speed})
         self._busy_until = time.monotonic() + self.ROUTINE_DURATION_S
         self._log(f"{motion_command} at speed {speed} to {robtarget[:60]}")
-        return ("OK", 200)
 
-    def set_speedratio(self, speed_ratio):
+    def set_speedratio(self, speed_ratio) -> None:
+        # Same guard as the real one, or testing against the stand-in would miss
+        # a bad value that the controller would refuse.
+        if not 0 <= int(speed_ratio) <= 100:
+            raise ValueError(f"Speed ratio {speed_ratio} is outside 0-100")
         self._log(f"speed ratio {speed_ratio}")
-        return ("OK", 200)
 
-    def request_mastership(self, domain=None):
-        return ("OK", 204)
+    def request_mastership(self, domain=None) -> None:
+        pass
 
-    def release_mastership(self, domain=None):
-        return ("OK", 204)
+    def release_mastership(self, domain=None) -> None:
+        pass
 
-    def motors_on(self):
-        return ("OK", 204)
+    def motors_on(self) -> None:
+        pass
 
-    def motors_off(self):
-        return ("OK", 204)
+    def motors_off(self) -> None:
+        pass
 
     # ---- what would have been drawn ----
 

@@ -1,0 +1,39 @@
+# Every parameter the driver takes.
+#
+#   ros2 run robot_control robot_controller_node_exec --ros-args \
+#       --params-file src/robot_control/config/robot_control.yaml
+#
+# The launch file loads this and lets its own arguments override the connection
+# settings. Change the node key below if you rename the node.
+#
+# The RAPID vocabulary - task, mechanical unit, DIPC queue, module and symbol
+# names, routine names - is deliberately NOT here. The driver and the RAPID
+# program on the controller are a matched pair, so those live in
+# robot_control/constants.py as the contract between them.
+
+robot_controller:
+  ros__parameters:
+
+    connection:
+      # rws = a real or virtual controller over Robot Web Services
+      # sim = the in-process stand-in, no robot involved
+      backend: rws
+      ip_address: 192.168.0.37
+      # 443 on the physical controller, 80 on the virtual one
+      port: 443
+      username: Admin
+      password: robotics
+      # Raise for a controller that is not on the same switch.
+      http_timeout_s: 2.0
+
+    utility:
+      send_keepalive: true
+      keepalive_interval: 30.0
+      send_joint_states: true
+      joint_states_hz: 10.0
+
+    # The RAPID buffer queue answers 500 when it is full and the robot has not
+    # drained it yet. That is normal back-pressure, not an error.
+    dipc:
+      retry_max: 20
+      retry_delay_s: 0.1
