@@ -5,7 +5,7 @@ controller expects, and hands the verbs (GET / POST / OPTIONS) up to
 RWSInterface, which knows the endpoints.
 """
 
-from typing import Any, Protocol
+from typing import Any, NamedTuple, Protocol
 
 import requests
 from requests.auth import HTTPBasicAuth
@@ -13,6 +13,31 @@ from requests.auth import HTTPBasicAuth
 requests.packages.urllib3.disable_warnings(
     requests.packages.urllib3.exceptions.InsecureRequestWarning
 )
+
+# Status for a call that never reached the controller, because a precondition
+# failed first. It is not an HTTP code and the controller never produces it.
+NOT_SENT = -1
+
+
+class RWSResult(NamedTuple):
+    """What every RWSInterface call answers with.
+
+    Still a plain two-tuple, so `message, status = client.motors_on()` keeps
+    working. What it adds is one place that decides what counts as success:
+    GETs come back 200 but POSTs come back 204, so comparing against a single
+    number at the call site is a mistake waiting to happen.
+
+    On a successful read `message` carries the payload; on a failure it carries
+    the reason, prefixed with "ERR - ". Test `ok` rather than the prefix.
+    """
+
+    message: str
+    status: int
+
+    @property
+    def ok(self) -> bool:
+        """True when the controller accepted the call - any 2xx."""
+        return 200 <= self.status < 300
 
 
 class SupportsLogging(Protocol):
@@ -53,6 +78,8 @@ class RWSClient:
         port: int = 80,
         logger: SupportsLogging | None = None,
     ) -> None:
+        # https even on port 80: the controller speaks TLS on both ports, the
+        # number only selects which service answers. Plain http gets refused.
         proto = "https"
         self.base_url = f"{proto}://{host}:{port}"
         self.session = requests.Session()
@@ -60,6 +87,8 @@ class RWSClient:
         self.timeout_sec = 2  # seconds
         self.logger: SupportsLogging = DefaultLogger() if logger is None else logger
 
+        # The controller serves a self-signed certificate that no CA vouches
+        # for, so verification would fail against every real robot.
         self.session.verify = False
         self.auth_method = HTTPBasicAuth(username, password)
         self.header_typ = {
@@ -81,17 +110,17 @@ class RWSClient:
                 timeout=self.timeout_sec,
             )
 
+            if resp.status_code != 200:
+                self.logger.error(f"Login failed, status code: {resp.status_code}")
+                return False
+
             if "ABBCX" not in self.session.cookies.get_dict():
                 self.logger.error("Login failed: missing ABBCX cookie")
                 return False
 
-            if resp.status_code == 200:
-                self._logged_in = True
-                self.logger.info(f"Login successful, status code: {resp.status_code}")
-                return True
-            else:
-                self.logger.info(f"Login failed, status code: {resp.status_code}")
-                return False
+            self._logged_in = True
+            self.logger.info(f"Login successful, status code: {resp.status_code}")
+            return True
 
         except Exception as e:
             self.logger.error(f"Login request failed, check connection: {e}")
@@ -204,7 +233,9 @@ class RWSClient:
         url = f"{self.base_url}{path}"
 
         try:
-            resp = self.session.options(url, headers=self.header_opt)
+            resp = self.session.options(
+                url, headers=self.header_opt, timeout=self.timeout_sec
+            )
             if resp.status_code not in (200, 201, 204):
                 self.logger.error(f"OPTIONS {path} failed: {resp.status_code}")
             return (resp.json() if resp.content else None, resp.status_code)
