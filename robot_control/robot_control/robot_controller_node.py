@@ -31,23 +31,23 @@ from dataclasses import dataclass
 from math import radians
 
 import rclpy
-from rclpy.action import ActionServer, GoalResponse, CancelResponse
+from geometry_msgs.msg import PoseStamped
+from rcl_interfaces.msg import ParameterDescriptor
+from rclpy.action import ActionServer, CancelResponse, GoalResponse
 from rclpy.action.server import ServerGoalHandle
 from rclpy.callback_groups import ReentrantCallbackGroup
 from rclpy.executors import MultiThreadedExecutor
-from rclpy.lifecycle import Node as LifecycleNode, State, TransitionCallbackReturn
+from rclpy.lifecycle import Node as LifecycleNode
+from rclpy.lifecycle import State, TransitionCallbackReturn
 from rclpy.parameter import Parameter
-
-from rcl_interfaces.msg import ParameterDescriptor
-from geometry_msgs.msg import PoseStamped
 from sensor_msgs.msg import JointState
 
-from robot_control_msgs.action import ExecutePoseArray, ExecuteJointArray
+from robot_control.constants import RobotControllerConstants as RCC
+from robot_control.conversions import joints_to_dipc_jointtarget, pose_to_dipc_robtarget
+from robot_control.rws.interface import RWSInterface
+from robot_control_msgs.action import ExecuteJointArray, ExecutePoseArray
 from robot_control_msgs.msg import RobotJoints
 from robot_control_msgs.srv import RobotRequestSrv
-
-from robot_control.constants import RobotControllerConstants as RCC
-from robot_control.rws.interface import RWSInterface
 
 
 @dataclass(frozen=True)
@@ -460,6 +460,30 @@ class RobotControllerNode(LifecycleNode):
 
     # ============= ACTION SERVER CALLBACKS =============
 
+    def _start_routine(self, routine_name: str, speed):
+        """Point the RAPID program at a routine and set it running.
+
+        Every write is checked. A symbol that does not take means the robot
+        runs the previous routine, or none at all, while we stream a whole
+        trajectory at it - so a failure here has to stop the goal, not just
+        show up in the log.
+        """
+        writes = [
+            (f'"{routine_name}"', RCC.Symbols.ROUTINE_NAME, RCC.Modules.RAPID, 0.1),
+            (speed, RCC.Symbols.SPEED, RCC.Modules.USER, 0.1),
+            (RCC.States.EXECUTE, RCC.Symbols.CURRENT_STATE, RCC.Modules.MAIN, 0.3),
+        ]
+
+        for value, symbol, module, settle_s in writes:
+            message, status = self.RWS.set_rapid_symbol_raw(value, symbol, module)
+            if status != 204:
+                raise RuntimeError(
+                    f"Could not set RAPID symbol {symbol} in {module}: "
+                    f"{message} (status={status})"
+                )
+            # The controller needs a moment before the next write lands.
+            time.sleep(settle_s)
+
     def execute_pose_array_cb(
         self, goal_handle: ServerGoalHandle
     ) -> ExecutePoseArray.Result:
@@ -489,18 +513,7 @@ class RobotControllerNode(LifecycleNode):
             elif goal.motion_command == MC.MOVE_J:
                 routine_name = RCC.Routines.MOVE_J
 
-            self.RWS.set_rapid_symbol_raw(
-                f'"{routine_name}"', RCC.Symbols.ROUTINE_NAME, RCC.Modules.RAPID
-            )
-            time.sleep(0.1)
-            self.RWS.set_rapid_symbol_raw(
-                goal.speed, RCC.Symbols.SPEED, RCC.Modules.USER
-            )
-            time.sleep(0.1)
-            self.RWS.set_rapid_symbol_raw(
-                RCC.States.EXECUTE, RCC.Symbols.CURRENT_STATE, RCC.Modules.MAIN
-            )
-            time.sleep(0.3)
+            self._start_routine(routine_name, goal.speed)
 
         except Exception as e:
             error_msg = f"Error in execute_pose_array_cb: {e}"
@@ -534,7 +547,7 @@ class RobotControllerNode(LifecycleNode):
                 if goal_handle.is_cancel_requested:
                     userdef = "2"
 
-                robtarget_str = RWSInterface.pose_to_dipc_robtarget(pose)
+                robtarget_str = pose_to_dipc_robtarget(pose)
 
                 retries = 0
                 while True:
@@ -641,18 +654,7 @@ class RobotControllerNode(LifecycleNode):
             elif goal.motion_command == RCC.MotionCommands.MOVE_ABS_L:
                 routine_name = RCC.Routines.MOVE_ABS_L
 
-            self.RWS.set_rapid_symbol_raw(
-                f'"{routine_name}"', RCC.Symbols.ROUTINE_NAME, RCC.Modules.RAPID
-            )
-            time.sleep(0.1)
-            self.RWS.set_rapid_symbol_raw(
-                goal.speed, RCC.Symbols.SPEED, RCC.Modules.USER
-            )
-            time.sleep(0.1)
-            self.RWS.set_rapid_symbol_raw(
-                RCC.States.EXECUTE, RCC.Symbols.CURRENT_STATE, RCC.Modules.MAIN
-            )
-            time.sleep(0.3)
+            self._start_routine(routine_name, goal.speed)
 
         except Exception as e:
             error_msg = f"Error in execute_joint_array_cb setup: {e}"
@@ -684,7 +686,7 @@ class RobotControllerNode(LifecycleNode):
                 if goal_handle.is_cancel_requested:
                     userdef = "2"
 
-                jointtarget_str = RWSInterface.joints_to_dipc_jointtarget(joints)
+                jointtarget_str = joints_to_dipc_jointtarget(joints)
 
                 retries = 0
                 while True:

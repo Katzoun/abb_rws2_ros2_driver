@@ -91,14 +91,13 @@ git clone https://github.com/Katzoun/tvarometr_ws.git
 cd tvarometr_ws
 git lfs install && git lfs pull   # required before building the vision image
 
-cp .env.example .env              # edit robot credentials / device settings
 docker compose build
 docker compose up
 ```
 
-`ROBOT_BACKEND=sim` in `.env` (the default) runs the driver's stand-in
-controller, which accepts every motion goal and keeps the targets it was sent.
-`rws` talks to a real or virtual ABB controller.
+Robot address and credentials live in
+`src/robot_control/config/robot_control.yaml`, which the launch file loads - edit
+it before the first run. There is no `.env`.
 
 The control container now runs the robot driver on its own. It is a managed
 node, so it comes up unconfigured and does nothing until it is driven through
@@ -127,9 +126,17 @@ context is active.
 
 ### Working on the code
 
-Rebuilding the image for every edit is slow. Copy
-`docker-compose.override.yml.example` to `docker-compose.override.yml` (git-ignored)
-to mount the workspace source into the containers, then rebuild in place:
+Rebuilding the image for every edit is slow. `docker-compose.dev.yml` is a
+separate, self-contained compose file that starts the control container alone
+with the workspace bind-mounted, so edits on the host land inside the container
+straight away. `.devcontainer/` points VSCode at that same file, so
+"Reopen in Container" gives you an editor and a terminal running inside it.
+
+```bash
+docker compose -f docker-compose.dev.yml up -d
+```
+
+With the source mounted, rebuild in place instead of rebuilding the image:
 
 ```bash
 docker compose exec vision bash -lc \
@@ -194,12 +201,15 @@ ros2 run master_pkg keyboard_publisher_exec          # terminal 3
 
 ### Robot Configuration
 
-Address and credentials come from `.env` (see `.env.example`) and are passed to
-the driver as ROS parameters - `connection.ip_address`, `connection.port`,
-`connection.username`, `connection.password`. The virtual controller usually listens on port 80, the
+Address and credentials come from `src/robot_control/config/robot_control.yaml`,
+which the launch file passes to the driver as ROS parameters -
+`connection.ip_address`, `connection.port`, `connection.username`,
+`connection.password`. The virtual controller usually listens on port 80, the
 physical one on 443.
 
-Running without a robot at all: `ROBOT_BACKEND=sim`.
+The file is read on every `configure`, so the driver can be pointed at a
+different controller without restarting it: `cleanup`, `ros2 param set` the new
+values, `configure` again.
 
 ## Project Structure
 
@@ -216,9 +226,12 @@ tvarometr_ws/
 │   ├── robot_control_msgs/  # driver msg/srv/action definitions
 │   ├── robot_control/   # ABB robot driver, managed node (RWS)
 │   │   ├── launch/robot_control.launch.py
+│   │   ├── config/robot_control.yaml  # address, credentials, rates
 │   │   └── robot_control/
 │   │       ├── robot_controller_node.py
-│   │       └── rws/               # HTTP client, RWS calls, sim stand-in
+│   │       ├── conversions.py     # ROS messages <-> RAPID literals
+│   │       ├── constants.py       # names shared with the RAPID program
+│   │       └── rws/               # HTTP client, RWS calls
 │   └── master_pkg/                # Pre-rebuild system, reference only
 │       ├── launch/control.launch.py
 │       └── master_pkg/
@@ -230,8 +243,9 @@ tvarometr_ws/
 │               └── path_generator_multiline.py
 ├── models/                        # Network weights, Git LFS
 ├── docker/                        # Dockerfiles, pinned requirements, entrypoint
-├── docker-compose.yml
-└── .env.example
+├── .devcontainer/                 # VSCode dev container, uses the dev compose
+├── docker-compose.yml             # full system
+└── docker-compose.dev.yml         # control only, source mounted
 ```
 
 ## Technical Details

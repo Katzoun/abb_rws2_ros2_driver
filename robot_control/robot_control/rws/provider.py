@@ -5,6 +5,8 @@ controller expects, and hands the verbs (GET / POST / OPTIONS) up to
 RWSInterface, which knows the endpoints.
 """
 
+from typing import Any, Protocol
+
 import requests
 from requests.auth import HTTPBasicAuth
 
@@ -13,27 +15,50 @@ requests.packages.urllib3.disable_warnings(
 )
 
 
+class SupportsLogging(Protocol):
+    """The two logger methods this layer calls.
+
+    The node passes in an rclpy logger and the fallback below is a plain
+    printer. They share no base class, so what ties them together is the shape
+    of their interface, not their ancestry - which is what Protocol is for.
+    """
+
+    def info(self, msg: str) -> None: ...
+
+    def error(self, msg: str) -> None: ...
+
+
+class DefaultLogger:
+    """Fallback for when nobody passes a logger in.
+
+    Satisfies SupportsLogging without inheriting from it, which is the whole
+    point of the protocol - the same way the rclpy logger does.
+    """
+
+    @staticmethod
+    def info(msg: str) -> None:
+        print(msg)
+
+    @staticmethod
+    def error(msg: str) -> None:
+        print(f"ERROR: {msg}")
+
+
 class RWSClient:
-    def __init__(self, host: str, username: str, password: str, port=80, logger=None):
+    def __init__(
+        self,
+        host: str,
+        username: str,
+        password: str,
+        port: int = 80,
+        logger: SupportsLogging | None = None,
+    ) -> None:
         proto = "https"
         self.base_url = f"{proto}://{host}:{port}"
         self.session = requests.Session()
         self._logged_in = False
         self.timeout_sec = 2  # seconds
-        if logger is None:
-
-            class DefaultLogger:
-                @staticmethod
-                def info(msg):
-                    print(msg)
-
-                @staticmethod
-                def error(msg):
-                    print(f"ERROR: {msg}")
-
-            self.logger = DefaultLogger()
-        else:
-            self.logger = logger
+        self.logger: SupportsLogging = DefaultLogger() if logger is None else logger
 
         self.session.verify = False
         self.auth_method = HTTPBasicAuth(username, password)
@@ -43,23 +68,7 @@ class RWSClient:
         }
         self.header_opt = {"Accept": "application/xhtml+xml;v=2.0"}
 
-    def __exit__(self, exc_type, exc_val, exc_tb):
-        """Context manager exit"""
-        self.logger.info(
-            f"RWSClient.__exit__ called - Exception: {exc_type is not None}"
-        )
-
-        # Cleanup resources
-        self.logger.info("RWS Auto-logout triggered...")
-        self.logout()
-
-        # Log exception if any
-        if exc_type is not None:
-            self.logger.error(f"Exception in RWSClient: {exc_type.__name__}: {exc_val}")
-
-        return False  # Propagate exception
-
-    def login(self):
+    def login(self) -> bool:
         """Log in to the ABB RWS server. Returns True on success."""
 
         self._logged_in = False
@@ -88,7 +97,7 @@ class RWSClient:
             self.logger.error(f"Login request failed, check connection: {e}")
             raise ConnectionError(f"Login request failed: {e}") from e
 
-    def logout(self):
+    def logout(self) -> bool:
         """Log out and close the session. Returns True on success."""
         url = f"{self.base_url}/logout"
         self._logged_in = False
@@ -116,7 +125,7 @@ class RWSClient:
             self.logger.error(f"Logout request failed, message: {e}")
             raise ConnectionError(f"Logout request failed: {e}") from e
 
-    def get_login_state(self):
+    def get_login_state(self) -> bool:
         """Check if the session is still logged in."""
         url = f"{self.base_url}"
         try:
@@ -129,7 +138,7 @@ class RWSClient:
             self.logger.error(f"Login state request failed, message: {e}")
             raise ConnectionError(f"Login state request failed: {e}") from e
 
-    def send_keepalive(self):
+    def send_keepalive(self) -> bool:
         """Send a lightweight GET to keep the connection alive."""
 
         # Lightweight GET request - just check controller state
@@ -152,7 +161,7 @@ class RWSClient:
             self._logged_in = False
             raise ConnectionError(f"Keepalive request failed: {e}") from e
 
-    def get_request(self, path):
+    def get_request(self, path: str) -> tuple[Any | None, int]:
         """Send a GET request. Returns (json_data, status_code)."""
 
         url = f"{self.base_url}{path}"
@@ -168,7 +177,7 @@ class RWSClient:
             self.logger.error(f"GET request {path} failed: {e}")
             return (None, (-1))
 
-    def post_request(self, path, dataIn=None):
+    def post_request(self, path: str, dataIn: Any | None = None) -> int:
         """Send a POST request. Returns the HTTP status code."""
 
         url = f"{self.base_url}{path}"
@@ -189,7 +198,7 @@ class RWSClient:
             self.logger.error(f"POST request {path} failed: {e}")
             return -1
 
-    def options_request(self, path):
+    def options_request(self, path: str) -> tuple[Any | None, int]:
         """Send an OPTIONS request. Returns (json_data, status_code)."""
 
         url = f"{self.base_url}{path}"

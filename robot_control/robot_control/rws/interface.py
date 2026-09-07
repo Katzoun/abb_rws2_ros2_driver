@@ -4,9 +4,10 @@ contains the endpoints and their payloads.
 
 import json
 import time
+from typing import Any
 
 from robot_control.constants import RobotControllerConstants
-from robot_control.rws.provider import RWSClient
+from robot_control.rws.provider import RWSClient, SupportsLogging
 
 
 class RWSInterface(RWSClient):
@@ -17,8 +18,13 @@ class RWSInterface(RWSClient):
     Unless said otherwise, a method returns (data, http_status_code)."""
 
     def __init__(
-        self, host: str, username: str, password: str, port: int = 80, logger=None
-    ):
+        self,
+        host: str,
+        username: str,
+        password: str,
+        port: int = 80,
+        logger: SupportsLogging | None = None,
+    ) -> None:
 
         super().__init__(host, username, password, port=port, logger=logger)
 
@@ -64,7 +70,7 @@ class RWSInterface(RWSClient):
         """Returns (The current safety mode of the robot, http_status_code)."""
         return self.get_generic("/ctrl/safety/mode", "safetymode")
 
-    def get_rapid_retcode(self, retcode_name) -> tuple[str, int]:
+    def get_rapid_retcode(self, retcode_name: str) -> tuple[str, int]:
         """Returns (RAPID return code value, http_status_code)."""
         if not retcode_name:
             raise ValueError("Return code name cannot be empty")
@@ -113,38 +119,38 @@ class RWSInterface(RWSClient):
         """Returns (The list of RAPID modules as JSON string, http_status_code)."""
         return self.get_generic_json("/rw/rapid/modules")
 
-    def get_leadthrough_state(self, mechunit_name="ROB_1") -> tuple[str, int]:
+    def get_leadthrough_state(self, mechunit_name: str = "ROB_1") -> tuple[str, int]:
         """Returns (The leadthrough state of the robot, http_status_code)."""
         return self.get_generic(
             f"/rw/motionsystem/mechunits/{mechunit_name}/lead-through", "status"
         )
 
-    def get_robot_baseframe(self, mechunit_name="ROB_1") -> tuple[str, int]:
+    def get_robot_baseframe(self, mechunit_name: str = "ROB_1") -> tuple[str, int]:
         """Robot base frame, as a JSON string."""
         return self.get_generic_json(
             f"/rw/motionsystem/mechunits/{mechunit_name}/baseframe"
         )
 
-    def get_robot_cartesian(self, mechunit_name="ROB_1") -> tuple[str, int]:
+    def get_robot_cartesian(self, mechunit_name: str = "ROB_1") -> tuple[str, int]:
         """Returns (The robot cartesian position as JSON string, http_status_code)."""
         return self.get_generic_json(
             f"/rw/motionsystem/mechunits/{mechunit_name}/cartesian"
         )
 
-    def get_robot_robtarget(self, mechunit_name="ROB_1") -> tuple[str, int]:
+    def get_robot_robtarget(self, mechunit_name: str = "ROB_1") -> tuple[str, int]:
         """Returns (The robot robtarget position as JSON string, http_status_code)."""
         return self.get_generic_json(
             f"/rw/motionsystem/mechunits/{mechunit_name}/robtarget"
         )
 
-    def get_robot_jointtarget(self, mechunit_name="ROB_1") -> tuple[str, int]:
+    def get_robot_jointtarget(self, mechunit_name: str = "ROB_1") -> tuple[str, int]:
         """Robot joint target position, as a JSON string."""
         return self.get_generic_json(
             f"/rw/motionsystem/mechunits/{mechunit_name}/jointtarget"
         )
 
     def get_robot_joint_positions(
-        self, mechunit_name="ROB_1", num_ax=6
+        self, mechunit_name: str = "ROB_1", num_ax: int = 6
     ) -> tuple[str, int]:
         """Returns (The robot joint positions as JSON string, http_status_code)."""
         result_json, status = self.get_generic_json(
@@ -175,19 +181,21 @@ class RWSInterface(RWSClient):
         """Returns (The list of RAPID tasks as JSON string, http_status_code)."""
         return self.get_embed_json("/rw/rapid/tasks")
 
-    def get_task_robtarget(self, task_name="T_ROB1") -> tuple[str, int]:
+    def get_task_robtarget(self, task_name: str = "T_ROB1") -> tuple[str, int]:
         """Robtarget of a RAPID task, as a JSON string."""
         return self.get_generic_json(f"/rw/rapid/tasks/{task_name}/motion/robtarget")
 
-    def get_task_jointtarget(self, task_name="T_ROB1") -> tuple[str, int]:
+    def get_task_jointtarget(self, task_name: str = "T_ROB1") -> tuple[str, int]:
         """Jointtarget of a RAPID task, as a JSON string."""
         return self.get_generic_json(f"/rw/rapid/tasks/{task_name}/motion/jointtarget")
 
-    def get_task_modules(self, task_name="T_ROB1") -> tuple[str, int]:
+    def get_task_modules(self, task_name: str = "T_ROB1") -> tuple[str, int]:
         """Modules in a RAPID task, as a JSON string."""
         return self.get_generic_json(f"/rw/rapid/tasks/{task_name}/modules")
 
-    def get_io_signal(self, signal_name, network="", device="") -> tuple[str, int]:
+    def get_io_signal(
+        self, signal_name: str, network: str = "", device: str = ""
+    ) -> tuple[str, int]:
         """State of one IO signal, as a JSON string.
 
         Most signals resolve without a network and device."""
@@ -202,7 +210,9 @@ class RWSInterface(RWSClient):
             f"/rw/iosystem/signals/{network}{device}{signal_name}"
         )
 
-    def get_rapid_symbol(self, symbol_name, module_name, task_name="T_ROB1"):
+    def get_rapid_symbol(
+        self, symbol_name: str, module_name: str, task_name: str = "T_ROB1"
+    ) -> tuple[str, int]:
         """Value of a RAPID symbol in the given module."""
         if not symbol_name or not module_name:
             raise ValueError("Symbol name and module name cannot be empty")
@@ -210,22 +220,26 @@ class RWSInterface(RWSClient):
         symbol_url = f"RAPID%2F{task_name}%2F{module_name}%2F{symbol_name}"
         return self.get_generic(f"/rw/rapid/symbol/{symbol_url}/data", "value")
 
-    def get_rapid_symbol_properties(self, symbol_name, module_name, task_name="T_ROB1"):
+    def get_rapid_symbol_properties(
+        self, symbol_name: str, module_name: str, task_name: str = "T_ROB1"
+    ) -> tuple[str, int]:
         """Properties of a RAPID symbol, as a JSON string."""
         if not symbol_name or not module_name:
             raise ValueError("Symbol name and module name cannot be empty")
         symbol_url = f"RAPID%2F{task_name}%2F{module_name}%2F{symbol_name}"
         return self.get_embed_json(f"/rw/rapid/symbol/{symbol_url}/properties")
 
-    def get_dipc_queues(self):
+    def get_dipc_queues(self) -> tuple[str, int]:
         """Information about the DIPC queues, as a JSON string."""
         return self.get_embed_json("/rw/dipc")
 
-    def get_dipc_queue_info(self, queue_name="RMQ_T_ROB1"):
+    def get_dipc_queue_info(self, queue_name: str = "RMQ_T_ROB1") -> tuple[str, int]:
         """Information about one DIPC queue, as a JSON string."""
         return self.get_embed_json(f"/rw/dipc/{queue_name}/information")
 
-    def read_dipc_message(self, queue_name="RMQ_T_ROB1", timeout=0):
+    def read_dipc_message(
+        self, queue_name: str = "RMQ_T_ROB1", timeout: int = 0
+    ) -> tuple[Any | None, int]:
         """Read a message from the DIPC queue."""
 
         if not queue_name:
@@ -244,13 +258,11 @@ class RWSInterface(RWSClient):
         """Mastership state of the 'edit' or 'motion' domain."""
 
         if domain not in ["edit", "motion"]:
-            self.logger.error("Invalid domain specified for mastership check")
-            return ("ERR", -1)
+            raise ValueError("Invalid domain specified for mastership check")
 
-        if domain:
-            return self.get_generic_json(f"/rw/mastership/{domain}")
+        return self.get_generic_json(f"/rw/mastership/{domain}")
 
-    def get_rapid_idle(self):
+    def get_rapid_idle(self) -> tuple[str, int]:
         """Returns True if the RAPID execution is idle, False otherwise"""
 
         if not self.is_running():
@@ -368,12 +380,11 @@ class RWSInterface(RWSClient):
             self.logger.error("Failed to stop rapid script")
             return ("ERR - Failed to stop rapid script", status)
 
-    def request_mastership(self, domain=None) -> tuple[str, int]:
+    def request_mastership(self, domain: str | None = None) -> tuple[str, int]:
         """Request mastership on a domain ('edit'/'motion') or all if None."""
 
         if domain not in [None, "edit", "motion"]:
-            self.logger.error("Invalid domain specified for mastership request")
-            return ("ERR - Invalid domain specified", -1)
+            raise ValueError("Invalid domain specified for mastership request")
 
         if domain:
             status = self.post_request(f"/rw/mastership/{domain}/request")
@@ -389,12 +400,11 @@ class RWSInterface(RWSClient):
                 return ("ERR - Failed to obtain mastership on all domains", status)
             return ("OK", status)
 
-    def release_mastership(self, domain=None) -> tuple[str, int]:
+    def release_mastership(self, domain: str | None = None) -> tuple[str, int]:
         """Release mastership on a domain ('edit'/'motion') or all if None."""
 
         if domain not in [None, "edit", "motion"]:
-            self.logger.error("Invalid domain specified for mastership release")
-            return ("ERR - Invalid domain specified", -1)
+            raise ValueError("Invalid domain specified for mastership release")
 
         if domain:
             status = self.post_request(f"/rw/mastership/{domain}/release")
@@ -413,12 +423,11 @@ class RWSInterface(RWSClient):
             )
 
     def set_io_signal(
-        self, signal_name: str, signal_value: str, network="", device=""
+        self, signal_name: str, signal_value: str, network: str = "", device: str = ""
     ) -> tuple[str, int]:
         """Set the value of an I/O signal."""
         if not signal_name or signal_value is None:
-            self.logger.error("Signal name (param1) or value (param2) cannot be empty")
-            return ("ERR - Signal name (param1) or value (param2) cannot be empty", -1)
+            raise ValueError("Signal name and value cannot be empty")
         if network:
             network = network if network.endswith("/") else network + "/"
         if device:
@@ -438,7 +447,7 @@ class RWSInterface(RWSClient):
         """Set the robot speed ratio (0-100)."""
         speed_ratio_int = int(speed_ratio)
         if not (0 <= speed_ratio_int <= 100):
-            return ("ERR - Speed ratio must be between 0 and 100", -1)
+            raise ValueError("Speed ratio must be between 0 and 100")
 
         status = self.post_request(
             "/rw/panel/speedratio", dataIn={"speed-ratio": speed_ratio}
@@ -465,13 +474,7 @@ class RWSInterface(RWSClient):
     ) -> tuple[str, int]:
         """Set a RAPID symbol value. Requires edit mastership."""
         if not symbol_name or not module_name:
-            self.logger.error(
-                "Signal name (param1) or module name (param2) cannot be empty"
-            )
-            return (
-                "ERR - Signal name (param1) or module name (param2) cannot be empty",
-                -1,
-            )
+            raise ValueError("Symbol name and module name cannot be empty")
 
         symbol_url = f"RAPID%2F{task_name}%2F{module_name}%2F{symbol_name}"
 
@@ -503,16 +506,11 @@ class RWSInterface(RWSClient):
     ) -> tuple[str, int]:
         """Create a DIPC queue with the given name and size."""
         if not queue_name:
-            self.logger.error("Queue name cannot be empty")
-            return ("ERR - Queue name cannot be empty", -1)
-
+            raise ValueError("Queue name cannot be empty")
         if not queue_size.isdigit() or int(queue_size) <= 0:
-            self.logger.error("Queue size must be a positive integer")
-            return ("ERR - Queue size must be a positive integer", -1)
-
+            raise ValueError("Queue size must be a positive integer")
         if not message_size.isdigit() or int(message_size) <= 0:
-            self.logger.error("Message size must be a positive integer")
-            return ("ERR - Message size must be a positive integer", -1)
+            raise ValueError("Message size must be a positive integer")
 
         datastr = f"dipc-queue-name={queue_name}&dipc-queue-size={queue_size}&dipc-max-msg-size={message_size}"
         # print(datastr)
@@ -530,12 +528,9 @@ class RWSInterface(RWSClient):
     ) -> tuple[str, int]:
         """Send a message to a DIPC queue."""
         if not queue_name or not message:
-            self.logger.error("Queue name and message cannot be empty")
-            return ("ERR - Queue name and message cannot be empty", -1)
-
+            raise ValueError("Queue name and message cannot be empty")
         if not userdef.isdigit() or not (0 <= int(userdef) <= 255):
-            self.logger.error("Userdef must be an integer between 0 and 255")
-            return ("ERR - Userdef must be an integer between 0 and 255", -1)
+            raise ValueError("Userdef must be an integer between 0 and 255")
 
         payload = {
             "dipc-src-queue-name": queue_name,
@@ -563,7 +558,7 @@ class RWSInterface(RWSClient):
             )
 
     # GET METHODS - non-string return types, for internal Python use
-    def is_running(self):
+    def is_running(self) -> bool:
         """Returns True if the RAPID execution is running, False otherwise"""
         (data, status) = self.get_rapid_execution_state()
         if status != 200:
@@ -579,7 +574,7 @@ class RWSInterface(RWSClient):
         else:
             raise RuntimeError(f"Unknown RAPID execution state: {state}")
 
-    def is_rapid_idle(self):
+    def is_rapid_idle(self) -> bool:
         """Returns True if the RAPID execution is idle, False otherwise"""
 
         if not self.is_running():
@@ -595,18 +590,26 @@ class RWSInterface(RWSClient):
         else:
             return int(data) == 0
 
-    def is_master(self, domain=None):
+    def is_master(self, domain: str | None = None) -> bool:
         """Whether we hold mastership on the 'edit' or 'motion' domain."""
         if domain not in ["edit", "motion"]:
             raise ValueError("Invalid domain specified")
 
-        if domain:
-            (data, _) = self.get_request(f"/rw/mastership/{domain}")
-            mastership = data.get("state", [])[0]
-            held_by_me = mastership.get("mastershipheldbyme", False)
-            return bool(held_by_me)
+        (data, status) = self.get_request(f"/rw/mastership/{domain}")
+        if status != 200 or data is None:
+            raise RuntimeError(
+                f"Could not read mastership of the {domain} domain (status={status})"
+            )
 
-    def make_robot_ready(self):
+        state = data.get("state") or []
+        if not state:
+            raise RuntimeError(f"Mastership response for {domain} carried no state")
+
+        # RWS answers in strings, so "false" would be truthy on its own.
+        held = str(state[0].get("mastershipheldbyme", "false")).strip().lower()
+        return held in ("true", "1")
+
+    def make_robot_ready(self) -> tuple[str, int]:
         """Prepare the robot for operation (mastership, motors, RAPID start)."""
 
         if not self.is_master("edit"):
@@ -670,36 +673,50 @@ class RWSInterface(RWSClient):
                 RobotControllerConstants.MotionCommands.MOVE_L,
                 RobotControllerConstants.MotionCommands.MOVE_J,
             ]:
-                return ("ERR - Unsupported motion command", -1)
+                raise ValueError(f"Unsupported motion command: {motion_command}")
             if motion_command == RobotControllerConstants.MotionCommands.MOVE_L:
                 routine_name = RobotControllerConstants.Routines.SINGLE_MOVE_L
             elif motion_command == RobotControllerConstants.MotionCommands.MOVE_J:
                 routine_name = RobotControllerConstants.Routines.SINGLE_MOVE_J
 
-            self.set_rapid_symbol_raw(
-                f'"{routine_name}"',
-                RobotControllerConstants.Symbols.ROUTINE_NAME,
-                RobotControllerConstants.Modules.RAPID,
-            )
-            time.sleep(0.1)
-            self.set_rapid_symbol_raw(
-                speed,
-                RobotControllerConstants.Symbols.SPEED,
-                RobotControllerConstants.Modules.USER,
-            )
-            self.set_rapid_symbol_raw(
-                robtarget,
-                RobotControllerConstants.Symbols.RECEIVED_ROBTARGET,
-                RobotControllerConstants.Modules.USER,
-            )
-            time.sleep(
-                0.2
-            )  # small delay to ensure symbols are set before starting the routine
-            self.set_rapid_symbol_raw(
-                RobotControllerConstants.States.EXECUTE,
-                RobotControllerConstants.Symbols.CURRENT_STATE,
-                RobotControllerConstants.Modules.MAIN,
-            )
+            # Each write is checked: reporting OK after a symbol failed to
+            # take would leave the robot running the previous routine while
+            # the caller believes the new one started. The delays give the
+            # controller a moment before the next write lands.
+            writes = [
+                (
+                    f'"{routine_name}"',
+                    RobotControllerConstants.Symbols.ROUTINE_NAME,
+                    RobotControllerConstants.Modules.RAPID,
+                    0.1,
+                ),
+                (
+                    speed,
+                    RobotControllerConstants.Symbols.SPEED,
+                    RobotControllerConstants.Modules.USER,
+                    0.0,
+                ),
+                (
+                    robtarget,
+                    RobotControllerConstants.Symbols.RECEIVED_ROBTARGET,
+                    RobotControllerConstants.Modules.USER,
+                    0.2,
+                ),
+                (
+                    RobotControllerConstants.States.EXECUTE,
+                    RobotControllerConstants.Symbols.CURRENT_STATE,
+                    RobotControllerConstants.Modules.MAIN,
+                    0.0,
+                ),
+            ]
+
+            for value, symbol, module, settle_s in writes:
+                message, status = self.set_rapid_symbol_raw(value, symbol, module)
+                if status != 204:
+                    self.logger.error(f"Failed to set RAPID symbol {symbol}: {message}")
+                    return (f"ERR - Failed to set RAPID symbol {symbol}", status)
+                time.sleep(settle_s)
+
             return ("OK", 200)
 
         else:
@@ -708,81 +725,30 @@ class RWSInterface(RWSClient):
     def run_rapid_routine(self, routine_name: str) -> tuple[str, int]:
         """Run a RAPID routine on the robot."""
         if self.is_rapid_idle():
-            self.set_rapid_symbol_raw(
-                f'"{routine_name}"',
-                RobotControllerConstants.Symbols.ROUTINE_NAME,
-                RobotControllerConstants.Modules.RAPID,
-            )
-            time.sleep(
-                0.2
-            )  # small delay to ensure symbols are set before starting the routine
-            self.set_rapid_symbol_raw(
-                RobotControllerConstants.States.EXECUTE,
-                RobotControllerConstants.Symbols.CURRENT_STATE,
-                RobotControllerConstants.Modules.MAIN,
-            )
+            # Checked for the same reason as in run_move_command above.
+            writes = [
+                (
+                    f'"{routine_name}"',
+                    RobotControllerConstants.Symbols.ROUTINE_NAME,
+                    RobotControllerConstants.Modules.RAPID,
+                    0.2,
+                ),
+                (
+                    RobotControllerConstants.States.EXECUTE,
+                    RobotControllerConstants.Symbols.CURRENT_STATE,
+                    RobotControllerConstants.Modules.MAIN,
+                    0.0,
+                ),
+            ]
+
+            for value, symbol, module, settle_s in writes:
+                message, status = self.set_rapid_symbol_raw(value, symbol, module)
+                if status != 204:
+                    self.logger.error(f"Failed to set RAPID symbol {symbol}: {message}")
+                    return (f"ERR - Failed to set RAPID symbol {symbol}", status)
+                time.sleep(settle_s)
+
             return ("OK", 200)
 
         else:
             return ("ERR - Cannot execute RAPID routine while RAPID is not idle", -1)
-
-    @staticmethod
-    def pose_to_robtarget(pose) -> str:
-        """Pose to ABB robtarget string. Quaternion order: ROS xyzw -> ABB wxyz."""
-        x = pose.position.x
-        y = pose.position.y
-        z = pose.position.z
-
-        # Quaternion: ROS (x,y,z,w) -> ABB (w,x,y,z)
-        qw = pose.orientation.w
-        qx = pose.orientation.x
-        qy = pose.orientation.y
-        qz = pose.orientation.z
-
-        pos = f"[{x:.3f},{y:.3f},{z:.3f}]"
-        orient = f"[{qw:.6f},{qx:.6f},{qy:.6f},{qz:.6f}]"
-        confdata = "[0,0,0,0]"
-        extax = "[9E+09,9E+09,9E+09,9E+09,9E+09,9E+09]"
-
-        return f"[{pos},{orient},{confdata},{extax}]"
-
-    @staticmethod
-    def pose_list_to_robtargets(pose_list) -> str:
-        """Convert a list of geometry_msgs/Pose to an ABB robtargets array string."""
-        robtargets = []
-        for pose in pose_list:
-            robtarget = RWSInterface.pose_to_robtarget(pose)
-            robtargets.append(robtarget)
-        return f"[{','.join(robtargets)}]"
-
-    @staticmethod
-    def pose_to_dipc_robtarget(pose) -> str:
-        """Convert geometry_msgs/Pose to ABB DIPC robtarget string."""
-        # Position (meters -> millimeters)
-        x = pose.position.x
-        y = pose.position.y
-        z = pose.position.z
-
-        # Quaternion: ROS (x,y,z,w) -> ABB (w,x,y,z)
-        qw = pose.orientation.w
-        qx = pose.orientation.x
-        qy = pose.orientation.y
-        qz = pose.orientation.z
-
-        pos = f"[{x:.3f},{y:.3f},{z:.3f}]"
-        orient = f"[{qw:.6f},{qx:.6f},{qy:.6f},{qz:.6f}]"
-        confdata = "[0,0,0,0]"
-        extax = "[9E+09,9E+09,9E+09,9E+09,9E+09,9E+09]"
-
-        return f"robtarget;[{pos},{orient},{confdata},{extax}]"
-
-    @staticmethod
-    def joints_to_dipc_jointtarget(joints: list) -> str:
-        """Convert a list of 6 joint angles (degrees) to an ABB DIPC jointtarget string.
-
-        Format: jointtarget;[[j1,j2,j3,j4,j5,j6],[9E+09,...]]
-        The second array are external axes — all 9E+09 means not used.
-        """
-        robax = ",".join(f"{j:.4f}" for j in joints[:6])
-        extax = "9E+09,9E+09,9E+09,9E+09,9E+09,9E+09"
-        return f"jointtarget;[[{robax}],[{extax}]]"

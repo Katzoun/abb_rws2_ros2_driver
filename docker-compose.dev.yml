@@ -1,0 +1,63 @@
+# Development stack: the robot driver on its own, no vision service.
+#
+# Complete in itself. There is no override file layered underneath any more -
+# pick the file you want and the whole configuration is in front of you:
+#
+#   docker compose up                                 the full system
+#   docker compose -f docker-compose.dev.yml up -d    just the driver
+#
+# Or open the repo in VS Code and run "Dev Containers: Reopen in Container".
+# That uses this same service, so the editor and the command line get the same
+# environment.
+#
+# The container idles rather than launching the node, so you start it yourself
+# and its output lands in your terminal, where Ctrl+C stops it:
+#
+#   docker compose -f docker-compose.dev.yml exec control bash
+#   colcon build --symlink-install --packages-select robot_control_msgs robot_control
+#   ros2 launch robot_control robot_control.launch.py
+#
+# In a second shell, drive it through the lifecycle:
+#   ros2 lifecycle set /robot_controller configure
+#   ros2 lifecycle set /robot_controller activate
+
+services:
+  control:
+    build:
+      context: .
+      dockerfile: docker/control.Dockerfile
+    image: tvarometr/control:dev
+    container_name: tvarometr_control_dev
+    network_mode: host
+    # Shared IPC namespace as well: Fast DDS talks over shared memory to peers
+    # on the same host, and without this each container has its own /dev/shm,
+    # so they discover each other but no messages ever arrive.
+    ipc: host
+    stdin_open: true
+    tty: true
+    environment:
+      ROS_DOMAIN_ID: 42
+      RMW_IMPLEMENTATION: rmw_fastrtps_cpp
+      # Without this python buffers its output when stdout is a pipe, and log
+      # lines sit in the buffer instead of appearing in the terminal.
+      PYTHONUNBUFFERED: "1"
+    # The repo itself. A bind mount is one set of files seen from two places,
+    # so an edit made in the container terminal and an edit made on the host
+    # are the same write - there is nothing to copy back out, and nothing is
+    # lost when the container is rebuilt. It also covers up the install/ tree
+    # baked into the image, which is why the colcon build above is needed once.
+    volumes:
+      - .:/workspace
+      # Two directories that live in the container's own filesystem and would
+      # otherwise be thrown away with it on every rebuild. VS Code installs
+      # extensions into the container, not on the host, and the Claude Code
+      # extension carries a 217 MB binary; ~/.claude holds the login and the
+      # conversation history. Named volumes outlive the container, so both
+      # survive a rebuild.
+      - vscode-server:/root/.vscode-server
+      - claude-home:/root/.claude
+    command: sleep infinity
+
+volumes:
+  vscode-server:
+  claude-home:
