@@ -1,39 +1,44 @@
-# Every parameter the driver takes.
+# Parameters for the robot controller node.
 #
-#   ros2 run robot_control robot_controller_node_exec --ros-args \
-#       --params-file src/robot_control/config/robot_control.yaml
+# Values carried over from the intra project's config/robot_config.yaml, but in
+# the standard ROS 2 layout - that file used flat dotted keys under a
+# robot_parameters root, which cannot be fed to Node(parameters=[...]).
 #
-# The launch file loads this and lets its own arguments override the connection
-# settings. Change the node key below if you rename the node.
+# The node reads every one of these in on_configure, so changing a value means
+# taking the node back through the lifecycle for it to take effect:
 #
-# The RAPID vocabulary - task, mechanical unit, DIPC queue, module and symbol
-# names, routine names - is deliberately NOT here. The driver and the RAPID
-# program on the controller are a matched pair, so those live in
-# robot_control/constants.py as the contract between them.
+#   ros2 lifecycle set /robot_controller deactivate
+#   ros2 lifecycle set /robot_controller cleanup
+#   ros2 param set /robot_controller connection.ip_address 192.168.0.37
+#   ros2 lifecycle set /robot_controller configure
+#   ros2 lifecycle set /robot_controller activate
+#
+# The RAPID vocabulary - modules, symbols, routine names - is deliberately not
+# here. The driver and the RAPID program on the controller are a matched pair,
+# so those live in robot_control/constants.py.
+#
+# Change the key below if you rename the node.
 
 robot_controller:
   ros__parameters:
 
     connection:
-      # rws = a real or virtual controller over Robot Web Services
-      # sim = the in-process stand-in, no robot involved
-      backend: rws
-      ip_address: 192.168.0.37
-      # 443 on the physical controller, 80 on the virtual one
-      port: 443
+      # Controllers seen in the lab: 192.168.0.31, 192.168.0.37, 192.168.0.14,
+      # 192.168.1.157
+      ip_address: 192.168.0.31
+      # 80 on the virtual controller, 443 on the physical one
+      port: 80
       username: Admin
       password: robotics
-      # Raise for a controller that is not on the same switch.
-      http_timeout_s: 2.0
 
     utility:
       send_keepalive: true
-      keepalive_interval: 30.0
+      keepalive_interval: 120.0
       send_joint_states: true
-      joint_states_hz: 10.0
+      joint_states_hz: 8.0
 
-    # The RAPID buffer queue answers 500 when it is full and the robot has not
-    # drained it yet. That is normal back-pressure, not an error.
+    # The RAPID buffer queue answers 500 while it is full and the robot has not
+    # drained it yet. That is back-pressure, not an error, so we wait and retry.
     dipc:
-      retry_max: 20
-      retry_delay_s: 0.1
+      retry_max: 100
+      retry_delay_s: 0.25
