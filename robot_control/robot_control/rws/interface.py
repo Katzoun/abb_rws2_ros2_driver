@@ -631,21 +631,21 @@ class RWSInterface(RWSClient):
         if not self.is_master("edit"):
             mess, code = self.request_mastership("edit")
             if code != 204:
-                return RWSResult(
+                return RWSResult.error(
                     "ERR - Failed to obtain mastership on edit domain", code
                 )
 
         if self.is_master("motion"):
             mess, code = self.release_mastership("motion")
             if code != 204:
-                return RWSResult(
+                return RWSResult.error(
                     "ERR - Failed to release mastership on motion domain", code
                 )
 
         if not self.is_running():
             mess, code = self.get_opmode_state()
             if mess != "auto":
-                return RWSResult(
+                return RWSResult.error(
                     f"ERR - Failed controller is in {mess} mode, change to auto mode",
                     code,
                 )
@@ -658,11 +658,13 @@ class RWSInterface(RWSClient):
 
             mess, code = self.get_controller_state()
             if mess != "motoron":
-                return RWSResult(f"ERR - Failed to turn on motors: {mess}", code)
+                return RWSResult.error(f"ERR - Failed to turn on motors: {mess}", code)
 
             mess, code = self.reset_pp()
             if code != 204:
-                return RWSResult(f"ERR - Failed to reset program pointer: {mess}", code)
+                return RWSResult.error(
+                    f"ERR - Failed to reset program pointer: {mess}", code
+                )
 
             time.sleep(1)
             mess, code = self.get_rapid_execution_state()
@@ -671,7 +673,7 @@ class RWSInterface(RWSClient):
             if state != "running":
                 mess, code = self.start_rapid_script()
                 if mess != "OK":
-                    return RWSResult(
+                    return RWSResult.error(
                         f"ERR - Failed to start RAPID script: {mess}", code
                     )
                 time.sleep(1)
@@ -681,7 +683,9 @@ class RWSInterface(RWSClient):
             if state == "running":
                 return RWSResult("Robot set up correctly", code)
             else:
-                return RWSResult(f"ERR - Failed to start RAPID script: {mess}", code)
+                return RWSResult.error(
+                    f"ERR - Failed to start RAPID script: {mess}", code
+                )
 
         else:
             return RWSResult("Robot is already running", 200)

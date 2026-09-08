@@ -422,23 +422,24 @@ class RobotControllerNode(LifecycleNode):
     # ============= TIMER CALLBACKS =============
 
     def keepalive_callback(self):
-        if self._logged_in:
-            self.logger.info("Sending keepalive signal...")
-            self._logged_in = False
-            try:
-                if self.RWS is None:
-                    self.logger.error("Keepalive skipped: no robot session")
-                    return
-                # send_keepalive reports the outcome itself.
-                if self.RWS.send_keepalive():
-                    self._logged_in = True
-                else:
-                    self.logger.error("Keepalive failed, treating session as lost")
-
-            except Exception as e:
-                self.logger.error(f"Keepalive failed: {e}")
-        else:
+        if not self._logged_in:
             self.logger.info("Not logged in, skipping keepalive.")
+            return
+
+        self.logger.info("Sending keepalive signal...")
+        try:
+            if self.RWS is None:
+                self.logger.error("Keepalive skipped: no robot session")
+                self._logged_in = False
+                return
+            # send_keepalive reports the outcome itself.
+            if not self.RWS.send_keepalive():
+                self._logged_in = False
+                self.logger.error("Keepalive failed, treating session as lost")
+
+        except Exception as e:
+            self._logged_in = False
+            self.logger.error(f"Keepalive failed: {e}")
 
     def joint_states_callback(self):
         if self._logged_in:
@@ -671,6 +672,9 @@ class RobotControllerNode(LifecycleNode):
         curr_pose = 0
         # Kept for the abort paths below, which have to close the RAPID loop.
         last_message: str | None = None
+        # A userdef=2 message the robot took. Without one the RAPID loop never
+        # ends, so every way out of here has to leave one behind.
+        terminator_sent = False
 
         self.logger.info(f"Starting DIPC trajectory execution with {total} poses")
 
@@ -703,6 +707,8 @@ class RobotControllerNode(LifecycleNode):
                     )
 
                     if status_code == 204:
+                        if userdef == "2":
+                            terminator_sent = True
                         break
 
                     if status_code == 500 and retries < dipc_retry_max:
@@ -715,9 +721,10 @@ class RobotControllerNode(LifecycleNode):
                         f"(status={status_code}, retries={retries})"
                     )
                     self.logger.error(error_msg)
-                    self._end_buffer_routine(
-                        rws, last_message, dipc_retry_max, dipc_retry_delay_s
-                    )
+                    if not terminator_sent:
+                        self._end_buffer_routine(
+                            rws, last_message, dipc_retry_max, dipc_retry_delay_s
+                        )
                     goal_handle.abort()
                     result.success = False
                     result.message = error_msg
@@ -738,6 +745,12 @@ class RobotControllerNode(LifecycleNode):
 
                 # If cancel was requested
                 if goal_handle.is_cancel_requested:
+                    # The cancel can land after the send, with this point already
+                    # queued as a fly-by. Repeating it as the last one ends the loop.
+                    if not terminator_sent:
+                        self._end_buffer_routine(
+                            rws, last_message, dipc_retry_max, dipc_retry_delay_s
+                        )
                     goal_handle.canceled()
                     result.success = False
                     result.message = f"Cancelled after sending {sent_count} pose(s)"
@@ -757,9 +770,10 @@ class RobotControllerNode(LifecycleNode):
         except Exception as e:
             error_msg = f"Error during DIPC trajectory execution: {e}"
             self.logger.error(error_msg)
-            self._end_buffer_routine(
-                rws, last_message, dipc_retry_max, dipc_retry_delay_s
-            )
+            if not terminator_sent:
+                self._end_buffer_routine(
+                    rws, last_message, dipc_retry_max, dipc_retry_delay_s
+                )
             goal_handle.abort()
             result.success = False
             result.message = error_msg
@@ -821,6 +835,9 @@ class RobotControllerNode(LifecycleNode):
         curr_idx = 0
         # Kept for the abort paths below, which have to close the RAPID loop.
         last_message: str | None = None
+        # A userdef=2 message the robot took. Without one the RAPID loop never
+        # ends, so every way out of here has to leave one behind.
+        terminator_sent = False
 
         self.logger.info(f"Starting DIPC joint trajectory with {total} waypoints")
 
@@ -851,6 +868,8 @@ class RobotControllerNode(LifecycleNode):
                     )
 
                     if status_code == 204:
+                        if userdef == "2":
+                            terminator_sent = True
                         break
 
                     if status_code == 500 and retries < dipc_retry_max:
@@ -863,9 +882,10 @@ class RobotControllerNode(LifecycleNode):
                         f"(status={status_code}, retries={retries})"
                     )
                     self.logger.error(error_msg)
-                    self._end_buffer_routine(
-                        rws, last_message, dipc_retry_max, dipc_retry_delay_s
-                    )
+                    if not terminator_sent:
+                        self._end_buffer_routine(
+                            rws, last_message, dipc_retry_max, dipc_retry_delay_s
+                        )
                     goal_handle.abort()
                     result.success = False
                     result.message = error_msg
@@ -881,6 +901,12 @@ class RobotControllerNode(LifecycleNode):
                 curr_idx += 1
 
                 if goal_handle.is_cancel_requested:
+                    # The cancel can land after the send, with this point already
+                    # queued as a fly-by. Repeating it as the last one ends the loop.
+                    if not terminator_sent:
+                        self._end_buffer_routine(
+                            rws, last_message, dipc_retry_max, dipc_retry_delay_s
+                        )
                     goal_handle.canceled()
                     result.success = False
                     result.message = f"Cancelled after sending {sent_count} waypoint(s)"
@@ -898,9 +924,10 @@ class RobotControllerNode(LifecycleNode):
         except Exception as e:
             error_msg = f"Error during joint trajectory execution: {e}"
             self.logger.error(error_msg)
-            self._end_buffer_routine(
-                rws, last_message, dipc_retry_max, dipc_retry_delay_s
-            )
+            if not terminator_sent:
+                self._end_buffer_routine(
+                    rws, last_message, dipc_retry_max, dipc_retry_delay_s
+                )
             goal_handle.abort()
             result.success = False
             result.message = error_msg
@@ -923,10 +950,14 @@ class RobotControllerNode(LifecycleNode):
         )
 
         try:
-            response.message, response.status_code = self.robot_request(cmd, params)
-            # 2xx means the controller accepted the call. Anything else is a
-            # failure the caller has to see, not a code buried in the message.
-            response.status = 200 <= response.status_code < 300
+            result = self.robot_request(cmd, params)
+            response.message, response.status_code = result
+            # An RWSResult knows whether the operation worked; a plain tuple
+            # carries nothing but the HTTP status of its last request.
+            outcome = getattr(result, "ok", None)
+            response.status = (
+                outcome if outcome is not None else 200 <= response.status_code < 300
+            )
 
         except Exception as e:
             error_msg = f"Error handling controller_request '{cmd}': {e}"

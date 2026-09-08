@@ -31,6 +31,25 @@ class RWSResult(NamedTuple):
         """True when the controller accepted the call - any 2xx."""
         return 200 <= self.status < 300
 
+    @staticmethod
+    def error(message: str, status: int) -> "RWSResult":
+        """A failure, whatever status the last request happened to return."""
+        return _FailedResult(message, status)
+
+
+class _FailedResult(RWSResult):
+    """An operation that failed even though its last request did not.
+
+    A sequence of requests can fail while every one of them answers 200, so
+    the outcome has to be carried by something other than the status.
+    """
+
+    __slots__ = ()
+
+    @property
+    def ok(self) -> bool:
+        return False
+
 
 class SupportsLogging(Protocol):
     """The two logger methods this layer calls.
