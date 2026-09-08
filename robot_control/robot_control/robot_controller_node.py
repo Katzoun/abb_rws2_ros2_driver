@@ -21,6 +21,7 @@ import inspect
 import json
 import threading
 import time
+from collections.abc import Callable
 from dataclasses import dataclass
 from math import radians
 
@@ -60,6 +61,10 @@ class ParamKeys:
     JOINT_STATES_HZ = "utility.joint_states_hz"
     DIPC_RETRY_MAX = "dipc.retry_max"
     DIPC_RETRY_DELAY_S = "dipc.retry_delay_s"
+    MOTION_START_TIMEOUT_S = "motion.start_timeout_s"
+    MOTION_TIMEOUT_S = "motion.completion_timeout_s"
+    MOTION_STALL_S = "motion.stall_timeout_s"
+    MOTION_POLL_S = "motion.poll_interval_s"
 
 
 # Defaults match config/robot_control.yaml; they only apply when the node is
@@ -151,7 +156,46 @@ PARAMETER_DECLARATIONS = [
             type=Parameter.Type.DOUBLE.value,
         ),
     ),
+    (
+        ParamKeys.MOTION_START_TIMEOUT_S,
+        5.0,
+        ParameterDescriptor(
+            description="How long to wait for RAPID to confirm the routine started",
+            type=Parameter.Type.DOUBLE.value,
+        ),
+    ),
+    (
+        ParamKeys.MOTION_TIMEOUT_S,
+        300.0,
+        ParameterDescriptor(
+            description="How long a trajectory may take before the goal is aborted",
+            type=Parameter.Type.DOUBLE.value,
+        ),
+    ),
+    (
+        ParamKeys.MOTION_STALL_S,
+        30.0,
+        ParameterDescriptor(
+            description="Abort when the robot has not moved for this long mid-trajectory",
+            type=Parameter.Type.DOUBLE.value,
+        ),
+    ),
+    (
+        ParamKeys.MOTION_POLL_S,
+        0.5,
+        ParameterDescriptor(
+            description="How often the robot is asked whether it has finished",
+            type=Parameter.Type.DOUBLE.value,
+        ),
+    ),
 ]
+
+# Reading the robot state can fail on its own now and then; only a run of
+# failures means the controller is really gone.
+READ_FAILURES_MAX = 5
+
+# Joint noise below this is the robot standing still, not moving (degrees).
+JOINT_EPSILON_DEG = 0.01
 
 # What the URDF calls the six axes. The controller answers with rax_1..rax_6.
 JOINT_NAMES = [
@@ -197,6 +241,10 @@ class RobotControllerNode(LifecycleNode):
         # machine: one trajectory on the robot at a time.
         self._busy_lock = threading.Lock()
         self._busy = False
+
+        # Echoed back by RAPID so a confirmation cannot be mistaken for the
+        # leftover of an earlier goal. RAPID nums hold integers up to 2**23.
+        self._request_id = 0
 
         declared_params = self.declare_parameters(
             namespace="",  # Empty because params already have dot notation
@@ -348,6 +396,7 @@ class RobotControllerNode(LifecycleNode):
 
         self.RWS = rws
         self._logged_in = True
+        self._seed_request_id(rws)
         self.logger.info("Login successful")
         return TransitionCallbackReturn.SUCCESS
 
@@ -574,16 +623,58 @@ class RobotControllerNode(LifecycleNode):
 
     # ============= ACTION SERVER CALLBACKS =============
 
-    def _start_routine(self, rws: RWSInterface, routine_name: str, speed):
-        """Point the RAPID program at a routine and set it running.
+    def _seed_request_id(self, rws: RWSInterface) -> None:
+        """Start the ids above whatever the controller still remembers.
 
-        A symbol that does not take leaves the robot on the previous routine,
-        so a failed write has to stop the goal.
+        RAPID keeps the last echo across restarts of this node, so a counter
+        that begins at zero would match an old confirmation.
         """
+        seen = [
+            self._read_num(rws, symbol, RCC.Modules.USER)
+            for symbol in (
+                RCC.Symbols.ACCEPTED_ID,
+                RCC.Symbols.COMPLETED_ID,
+                RCC.Symbols.REJECTED_ID,
+            )
+        ]
+        known = [value for value in seen if value is not None]
+        if not known:
+            self.logger.warning(
+                "Could not read the RAPID handshake ids, seeding by clock"
+            )
+            self._request_id = int(time.time()) % 999999
+            return
+
+        self._request_id = max(known)
+        self.logger.info(f"Handshake ids continue from {self._request_id}")
+
+    def _next_request_id(self) -> int:
+        """A fresh id for the next goal. Never 0 - that is RAPID's "none"."""
+        self._request_id = self._request_id % 999999 + 1
+        return self._request_id
+
+    def _read_num(self, rws: RWSInterface, symbol: str, module: str) -> int | None:
+        """A RAPID num as an int, or None when the controller would not say."""
+        value, status = rws.get_rapid_symbol(symbol, module)
+        if status != 200:
+            return None
+        try:
+            return int(float(value))
+        except ValueError:
+            return None
+
+    def _start_routine(self, rws: RWSInterface, routine_name: str, speed) -> int:
+        """Set a routine running and wait for RAPID to confirm it entered.
+
+        Writing the state only asks; an unknown routine name leaves the state
+        machine back at idle within milliseconds and nothing else happens.
+        """
+        request_id = self._next_request_id()
         writes = [
+            (str(request_id), RCC.Symbols.REQUEST_ID, RCC.Modules.USER, 0.1),
             (f'"{routine_name}"', RCC.Symbols.ROUTINE_NAME, RCC.Modules.RAPID, 0.1),
             (speed, RCC.Symbols.SPEED, RCC.Modules.USER, 0.1),
-            (RCC.States.EXECUTE, RCC.Symbols.CURRENT_STATE, RCC.Modules.MAIN, 0.3),
+            (RCC.States.EXECUTE, RCC.Symbols.CURRENT_STATE, RCC.Modules.MAIN, 0.0),
         ]
 
         for value, symbol, module, settle_s in writes:
@@ -595,6 +686,48 @@ class RobotControllerNode(LifecycleNode):
                 )
             # The controller needs a moment before the next write lands.
             time.sleep(settle_s)
+
+        self._await_routine_start(
+            rws,
+            request_id,
+            routine_name,
+            self._param_float(ParamKeys.MOTION_START_TIMEOUT_S),
+            self._param_float(ParamKeys.MOTION_POLL_S),
+        )
+        return request_id
+
+    def _await_routine_start(
+        self,
+        rws: RWSInterface,
+        request_id: int,
+        routine_name: str,
+        timeout_s: float,
+        poll_s: float,
+    ) -> None:
+        """Block until the routine says it is in and has emptied the queue.
+
+        Sending points before that confirmation risks RMQEmptyQueue swallowing
+        them, so this is also what makes the first send safe.
+        """
+        deadline = time.monotonic() + timeout_s
+
+        while time.monotonic() < deadline:
+            if self._read_num(rws, RCC.Symbols.ACCEPTED_ID, RCC.Modules.USER) == (
+                request_id
+            ):
+                self.logger.info(f"RAPID confirmed '{routine_name}' is running")
+                return
+            if self._read_num(rws, RCC.Symbols.REJECTED_ID, RCC.Modules.USER) == (
+                request_id
+            ):
+                raise RuntimeError(
+                    f"The controller does not know a routine called '{routine_name}'"
+                )
+            time.sleep(poll_s)
+
+        raise RuntimeError(
+            f"RAPID never confirmed '{routine_name}' started within {timeout_s:.0f} s"
+        )
 
     def _end_buffer_routine(
         self,
@@ -620,6 +753,134 @@ class RobotControllerNode(LifecycleNode):
             time.sleep(retry_delay_s)
 
         self.logger.error("Could not release the buffer routine, RAPID stays busy")
+
+    def _read_joints(self, rws: RWSInterface) -> list[float] | None:
+        """The six joint angles, or None when the controller would not say."""
+        message, status = rws.get_robot_joint_positions()
+        if status != 200:
+            return None
+        data = json.loads(message)
+        return [float(data[f"rax_{i}"]) for i in range(1, 7)]
+
+    def _wait_for_motion_end(
+        self,
+        rws: RWSInterface,
+        request_id: int,
+        on_progress: Callable[[int], None],
+        timeout_s: float,
+        stall_s: float,
+        poll_s: float,
+    ) -> tuple[bool, str, int]:
+        """Block until the routine reports this goal finished.
+
+        Queueing a point is not executing it, and the state machine going idle
+        is not proof either - only the echoed id says the robot arrived.
+        """
+        started = time.monotonic()
+        last_progress = started
+        last_joints: list[float] | None = None
+        moves_done = 0
+        read_failures = 0
+
+        def finished_now() -> tuple[bool, str, int] | None:
+            """The routine's own confirmation, once it has been written."""
+            if self._read_num(rws, RCC.Symbols.COMPLETED_ID, RCC.Modules.USER) != (
+                request_id
+            ):
+                return None
+            done = self._read_num(rws, RCC.Symbols.MOVES_DONE, RCC.Modules.USER)
+            count = moves_done if done is None else done
+            on_progress(count)
+            elapsed = time.monotonic() - started
+            return True, f"Robot finished in {elapsed:.1f} s", count
+
+        while True:
+            if not self._active:
+                return (
+                    False,
+                    "Node was deactivated while the robot was still moving",
+                    moves_done,
+                )
+            if not self._logged_in:
+                return (
+                    False,
+                    "Robot session was lost while the robot was still moving",
+                    moves_done,
+                )
+
+            joints = None
+            try:
+                outcome = finished_now()
+                if outcome is not None:
+                    return outcome
+
+                # Idle and stopped both leave the robot motionless, and neither
+                # of them means this goal is done.
+                if not rws.is_running():
+                    return (
+                        False,
+                        "RAPID stopped before the trajectory finished",
+                        moves_done,
+                    )
+
+                state, status = rws.get_rapid_symbol(
+                    RCC.Symbols.CURRENT_STATE, RCC.Modules.MAIN
+                )
+                if status != 200:
+                    raise RuntimeError(f"reading the robot state answered {status}")
+                if state.strip() == RCC.States.IDLE:
+                    # The routine writes completed_id a hair before the state
+                    # machine drops to idle, so look once more before failing.
+                    outcome = finished_now()
+                    if outcome is not None:
+                        return outcome
+                    return (
+                        False,
+                        ("The RAPID routine ended without finishing the trajectory"),
+                        moves_done,
+                    )
+
+                done = self._read_num(rws, RCC.Symbols.MOVES_DONE, RCC.Modules.USER)
+                if done is not None and done != moves_done:
+                    moves_done = done
+                    on_progress(moves_done)
+                    last_progress = time.monotonic()
+
+                joints = self._read_joints(rws)
+                read_failures = 0
+            except Exception as e:
+                read_failures += 1
+                if read_failures >= READ_FAILURES_MAX:
+                    return False, f"Lost contact with the controller: {e}", moves_done
+                self.logger.warning(f"Could not read the robot state: {e}")
+
+            now = time.monotonic()
+            if joints is not None and (
+                last_joints is None
+                or any(
+                    abs(new - old) > JOINT_EPSILON_DEG
+                    for new, old in zip(joints, last_joints)
+                )
+            ):
+                last_joints = joints
+                last_progress = now
+
+            if now - last_progress > stall_s:
+                return (
+                    False,
+                    (
+                        f"Robot has not moved for {stall_s:.0f} s but RAPID is still busy"
+                    ),
+                    moves_done,
+                )
+            if now - started > timeout_s:
+                return (
+                    False,
+                    f"Trajectory did not finish within {timeout_s:.0f} s",
+                    moves_done,
+                )
+
+            time.sleep(poll_s)
 
     def execute_pose_array_cb(
         self, goal_handle: ServerGoalHandle
@@ -651,7 +912,9 @@ class RobotControllerNode(LifecycleNode):
             if goal.motion_command not in routines:
                 raise ValueError(f"Unsupported motion command: {goal.motion_command}")
 
-            self._start_routine(rws, routines[goal.motion_command], goal.speed)
+            request_id = self._start_routine(
+                rws, routines[goal.motion_command], goal.speed
+            )
 
         except Exception as e:
             error_msg = f"Error in execute_pose_array_cb: {e}"
@@ -675,6 +938,10 @@ class RobotControllerNode(LifecycleNode):
         # A userdef=2 message the robot took. Without one the RAPID loop never
         # ends, so every way out of here has to leave one behind.
         terminator_sent = False
+        # Set when sending ends early. Either way the robot still has to work
+        # through what is already queued, so nothing returns before the wait.
+        send_error: str | None = None
+        cancelled = False
 
         self.logger.info(f"Starting DIPC trajectory execution with {total} poses")
 
@@ -716,20 +983,20 @@ class RobotControllerNode(LifecycleNode):
                         time.sleep(dipc_retry_delay_s)
                         continue
 
-                    error_msg = (
+                    send_error = (
                         f"DIPC send failed at pose {curr_pose + 1}/{total}: "
                         f"(status={status_code}, retries={retries})"
                     )
-                    self.logger.error(error_msg)
+                    self.logger.error(send_error)
                     if not terminator_sent:
                         self._end_buffer_routine(
                             rws, last_message, dipc_retry_max, dipc_retry_delay_s
                         )
-                    goal_handle.abort()
-                    result.success = False
-                    result.message = error_msg
-                    result.executed_count = sent_count
-                    return result
+                    break
+
+                # That break only left the retry loop; the queue is closed now.
+                if send_error is not None:
+                    break
 
                 sent_count += 1
 
@@ -751,35 +1018,57 @@ class RobotControllerNode(LifecycleNode):
                         self._end_buffer_routine(
                             rws, last_message, dipc_retry_max, dipc_retry_delay_s
                         )
-                    goal_handle.canceled()
-                    result.success = False
-                    result.message = f"Cancelled after sending {sent_count} pose(s)"
-                    result.executed_count = sent_count
-                    self.logger.info(result.message)
-                    return result
+                    cancelled = True
+                    break
 
-            # All poses sent successfully
-            goal_handle.succeed()
-            result.success = True
-            result.message = f"All {total} poses sent successfully"
-            result.executed_count = sent_count
-
-            self.logger.info(result.message)
-            return result
+            self.logger.info(f"All {total} poses queued, waiting for the robot")
 
         except Exception as e:
-            error_msg = f"Error during DIPC trajectory execution: {e}"
-            self.logger.error(error_msg)
+            send_error = f"Error during DIPC trajectory execution: {e}"
+            self.logger.error(send_error)
             if not terminator_sent:
                 self._end_buffer_routine(
                     rws, last_message, dipc_retry_max, dipc_retry_delay_s
                 )
-            goal_handle.abort()
-            result.success = False
-            result.message = error_msg
-            result.executed_count = sent_count
 
-            return result
+        def report_progress(done: int) -> None:
+            feedback_msg.current_index = max(done - 1, 0)
+            feedback_msg.state = f"Executed {done}/{total}"
+            goal_handle.publish_feedback(feedback_msg)
+
+        # However sending ended, the robot still has to work through the queue.
+        finished, wait_message, executed = self._wait_for_motion_end(
+            rws,
+            request_id,
+            report_progress,
+            self._param_float(ParamKeys.MOTION_TIMEOUT_S),
+            self._param_float(ParamKeys.MOTION_STALL_S),
+            self._param_float(ParamKeys.MOTION_POLL_S),
+        )
+
+        result.executed_count = executed
+        if not finished:
+            result.success = False
+            result.message = wait_message
+            self.logger.error(wait_message)
+            goal_handle.abort()
+        elif send_error is not None:
+            result.success = False
+            result.message = send_error
+            goal_handle.abort()
+        elif cancelled or goal_handle.is_cancel_requested:
+            # A cancel during the wait cannot unqueue anything, but the caller
+            # still asked for one and the goal has to end as cancelled.
+            result.success = False
+            result.message = f"Cancelled after {executed} of {total} points"
+            self.logger.info(result.message)
+            goal_handle.canceled()
+        else:
+            result.success = True
+            result.message = wait_message
+            self.logger.info(wait_message)
+            goal_handle.succeed()
+        return result
 
     def execute_joint_array_cb(
         self, goal_handle: ServerGoalHandle
@@ -815,7 +1104,9 @@ class RobotControllerNode(LifecycleNode):
             if goal.motion_command not in routines:
                 raise ValueError(f"Unsupported motion command: {goal.motion_command}")
 
-            self._start_routine(rws, routines[goal.motion_command], goal.speed)
+            request_id = self._start_routine(
+                rws, routines[goal.motion_command], goal.speed
+            )
 
         except Exception as e:
             error_msg = f"Error in execute_joint_array_cb setup: {e}"
@@ -838,6 +1129,10 @@ class RobotControllerNode(LifecycleNode):
         # A userdef=2 message the robot took. Without one the RAPID loop never
         # ends, so every way out of here has to leave one behind.
         terminator_sent = False
+        # Set when sending ends early. Either way the robot still has to work
+        # through what is already queued, so nothing returns before the wait.
+        send_error: str | None = None
+        cancelled = False
 
         self.logger.info(f"Starting DIPC joint trajectory with {total} waypoints")
 
@@ -877,20 +1172,20 @@ class RobotControllerNode(LifecycleNode):
                         time.sleep(dipc_retry_delay_s)
                         continue
 
-                    error_msg = (
+                    send_error = (
                         f"DIPC send failed at waypoint {curr_idx + 1}/{total}: "
                         f"(status={status_code}, retries={retries})"
                     )
-                    self.logger.error(error_msg)
+                    self.logger.error(send_error)
                     if not terminator_sent:
                         self._end_buffer_routine(
                             rws, last_message, dipc_retry_max, dipc_retry_delay_s
                         )
-                    goal_handle.abort()
-                    result.success = False
-                    result.message = error_msg
-                    result.executed_count = sent_count
-                    return result
+                    break
+
+                # That break only left the retry loop; the queue is closed now.
+                if send_error is not None:
+                    break
 
                 sent_count += 1
 
@@ -907,32 +1202,57 @@ class RobotControllerNode(LifecycleNode):
                         self._end_buffer_routine(
                             rws, last_message, dipc_retry_max, dipc_retry_delay_s
                         )
-                    goal_handle.canceled()
-                    result.success = False
-                    result.message = f"Cancelled after sending {sent_count} waypoint(s)"
-                    result.executed_count = sent_count
-                    self.logger.info(result.message)
-                    return result
+                    cancelled = True
+                    break
 
-            goal_handle.succeed()
-            result.success = True
-            result.message = f"All {total} waypoints sent successfully"
-            result.executed_count = sent_count
-            self.logger.info(result.message)
-            return result
+            self.logger.info(f"All {total} waypoints queued, waiting for the robot")
 
         except Exception as e:
-            error_msg = f"Error during joint trajectory execution: {e}"
-            self.logger.error(error_msg)
+            send_error = f"Error during joint trajectory execution: {e}"
+            self.logger.error(send_error)
             if not terminator_sent:
                 self._end_buffer_routine(
                     rws, last_message, dipc_retry_max, dipc_retry_delay_s
                 )
-            goal_handle.abort()
+
+        def report_progress(done: int) -> None:
+            feedback_msg.current_index = max(done - 1, 0)
+            feedback_msg.state = f"Executed {done}/{total}"
+            goal_handle.publish_feedback(feedback_msg)
+
+        # However sending ended, the robot still has to work through the queue.
+        finished, wait_message, executed = self._wait_for_motion_end(
+            rws,
+            request_id,
+            report_progress,
+            self._param_float(ParamKeys.MOTION_TIMEOUT_S),
+            self._param_float(ParamKeys.MOTION_STALL_S),
+            self._param_float(ParamKeys.MOTION_POLL_S),
+        )
+
+        result.executed_count = executed
+        if not finished:
             result.success = False
-            result.message = error_msg
-            result.executed_count = sent_count
-            return result
+            result.message = wait_message
+            self.logger.error(wait_message)
+            goal_handle.abort()
+        elif send_error is not None:
+            result.success = False
+            result.message = send_error
+            goal_handle.abort()
+        elif cancelled or goal_handle.is_cancel_requested:
+            # A cancel during the wait cannot unqueue anything, but the caller
+            # still asked for one and the goal has to end as cancelled.
+            result.success = False
+            result.message = f"Cancelled after {executed} of {total} points"
+            self.logger.info(result.message)
+            goal_handle.canceled()
+        else:
+            result.success = True
+            result.message = wait_message
+            self.logger.info(wait_message)
+            goal_handle.succeed()
+        return result
 
     # ============= REQUEST SERVICE =============
 

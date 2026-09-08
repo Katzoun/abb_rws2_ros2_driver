@@ -34,3 +34,11 @@ robot_controller:
     dipc:
       retry_max: 100
       retry_delay_s: 0.25
+
+    # Sending a point is not executing it, so a goal finishes only once the
+    # robot is done. These bound the waiting.
+    motion:
+      start_timeout_s: 5.0
+      completion_timeout_s: 300.0
+      stall_timeout_s: 30.0
+      poll_interval_s: 0.5

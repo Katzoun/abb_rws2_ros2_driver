@@ -711,55 +711,6 @@ class RWSInterface(RWSClient):
 
         return RWSResult("OK", 200)
 
-    def run_move_command(
-        self, motion_command: str, robtarget: str, speed: str
-    ) -> RWSResult:
-        """Execute a motion command (MoveL/MoveJ) to the given robtarget."""
-        if self.is_rapid_idle():
-            if motion_command not in [
-                RobotControllerConstants.MotionCommands.MOVE_L,
-                RobotControllerConstants.MotionCommands.MOVE_J,
-            ]:
-                raise ValueError(f"Unsupported motion command: {motion_command}")
-            if motion_command == RobotControllerConstants.MotionCommands.MOVE_L:
-                routine_name = RobotControllerConstants.Routines.SINGLE_MOVE_L
-            else:
-                routine_name = RobotControllerConstants.Routines.SINGLE_MOVE_J
-
-            writes = [
-                (
-                    f'"{routine_name}"',
-                    RobotControllerConstants.Symbols.ROUTINE_NAME,
-                    RobotControllerConstants.Modules.RAPID,
-                    0.1,
-                ),
-                (
-                    speed,
-                    RobotControllerConstants.Symbols.SPEED,
-                    RobotControllerConstants.Modules.USER,
-                    0.0,
-                ),
-                (
-                    robtarget,
-                    RobotControllerConstants.Symbols.RECEIVED_ROBTARGET,
-                    RobotControllerConstants.Modules.USER,
-                    0.2,
-                ),
-                (
-                    RobotControllerConstants.States.EXECUTE,
-                    RobotControllerConstants.Symbols.CURRENT_STATE,
-                    RobotControllerConstants.Modules.MAIN,
-                    0.0,
-                ),
-            ]
-
-            return self.apply_rapid_writes(writes)
-
-        else:
-            return RWSResult(
-                "ERR - Cannot execute motion command while RAPID is not idle", NO_STATUS
-            )
-
     def run_rapid_routine(self, routine_name: str) -> RWSResult:
         """Run a RAPID routine on the robot."""
         if self.is_rapid_idle():

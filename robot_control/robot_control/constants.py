@@ -37,7 +37,13 @@ class RobotControllerConstants:
         ROUTINE_NAME = "routine_name_input"
         SPEED = "speednum"
         CURRENT_STATE = "current_state"
-        RECEIVED_ROBTARGET = "received_robtarget"
+        # The handshake in TRobUser: we write REQUEST_ID, the routine echoes it
+        # back on entry and again once the robot has arrived.
+        REQUEST_ID = "request_id"
+        ACCEPTED_ID = "accepted_id"
+        COMPLETED_ID = "completed_id"
+        REJECTED_ID = "rejected_id"
+        MOVES_DONE = "moves_done"
 
     class States:
         EXECUTE = "2"
@@ -48,6 +54,3 @@ class RobotControllerConstants:
         MOVE_J = "run_routine_buffer_moveJ"
         MOVE_ABS_J = "run_routine_buffer_moveabsJ"
         MOVE_ABS_L = "run_routine_buffer_moveabsL"
-        SINGLE_MOVE_L = "run_single_moveL"
-        SINGLE_MOVE_J = "run_single_moveJ"
-        SINGLE_MOVE_C = "run_single_moveC"
