@@ -595,6 +595,31 @@ class RobotControllerNode(LifecycleNode):
             # The controller needs a moment before the next write lands.
             time.sleep(settle_s)
 
+    def _end_buffer_routine(
+        self,
+        rws: RWSInterface,
+        message: str | None,
+        retry_max: int,
+        retry_delay_s: float,
+    ) -> None:
+        """Let the RAPID buffer routine finish after a goal fell over.
+
+        Its loop only ends on a userdef=2 message, so dropping out without one
+        leaves the robot busy for good and every later goal gets rejected.
+        """
+        if message is None:
+            self.logger.error("Nothing was queued, RAPID stays busy until restarted")
+            return
+
+        for _ in range(retry_max + 1):
+            _, status = rws.send_dipc_message(message=message, userdef="2")
+            if status == 204:
+                self.logger.info("Buffer routine released, robot stops after the queue")
+                return
+            time.sleep(retry_delay_s)
+
+        self.logger.error("Could not release the buffer routine, RAPID stays busy")
+
     def execute_pose_array_cb(
         self, goal_handle: ServerGoalHandle
     ) -> ExecutePoseArray.Result:
@@ -644,6 +669,8 @@ class RobotControllerNode(LifecycleNode):
         total = len(poses)
         sent_count = 0
         curr_pose = 0
+        # Kept for the abort paths below, which have to close the RAPID loop.
+        last_message: str | None = None
 
         self.logger.info(f"Starting DIPC trajectory execution with {total} poses")
 
@@ -660,6 +687,7 @@ class RobotControllerNode(LifecycleNode):
                     userdef = "2"
 
                 robtarget_str = pose_to_dipc_robtarget(pose)
+                last_message = robtarget_str
 
                 retries = 0
                 while True:
@@ -687,6 +715,9 @@ class RobotControllerNode(LifecycleNode):
                         f"(status={status_code}, retries={retries})"
                     )
                     self.logger.error(error_msg)
+                    self._end_buffer_routine(
+                        rws, last_message, dipc_retry_max, dipc_retry_delay_s
+                    )
                     goal_handle.abort()
                     result.success = False
                     result.message = error_msg
@@ -726,6 +757,9 @@ class RobotControllerNode(LifecycleNode):
         except Exception as e:
             error_msg = f"Error during DIPC trajectory execution: {e}"
             self.logger.error(error_msg)
+            self._end_buffer_routine(
+                rws, last_message, dipc_retry_max, dipc_retry_delay_s
+            )
             goal_handle.abort()
             result.success = False
             result.message = error_msg
@@ -785,6 +819,8 @@ class RobotControllerNode(LifecycleNode):
         total = len(waypoints)
         sent_count = 0
         curr_idx = 0
+        # Kept for the abort paths below, which have to close the RAPID loop.
+        last_message: str | None = None
 
         self.logger.info(f"Starting DIPC joint trajectory with {total} waypoints")
 
@@ -800,6 +836,7 @@ class RobotControllerNode(LifecycleNode):
                     userdef = "2"
 
                 jointtarget_str = joints_to_dipc_jointtarget(joints)
+                last_message = jointtarget_str
 
                 retries = 0
                 while True:
@@ -826,6 +863,9 @@ class RobotControllerNode(LifecycleNode):
                         f"(status={status_code}, retries={retries})"
                     )
                     self.logger.error(error_msg)
+                    self._end_buffer_routine(
+                        rws, last_message, dipc_retry_max, dipc_retry_delay_s
+                    )
                     goal_handle.abort()
                     result.success = False
                     result.message = error_msg
@@ -858,6 +898,9 @@ class RobotControllerNode(LifecycleNode):
         except Exception as e:
             error_msg = f"Error during joint trajectory execution: {e}"
             self.logger.error(error_msg)
+            self._end_buffer_routine(
+                rws, last_message, dipc_retry_max, dipc_retry_delay_s
+            )
             goal_handle.abort()
             result.success = False
             result.message = error_msg
@@ -881,7 +924,9 @@ class RobotControllerNode(LifecycleNode):
 
         try:
             response.message, response.status_code = self.robot_request(cmd, params)
-            response.status = True
+            # 2xx means the controller accepted the call. Anything else is a
+            # failure the caller has to see, not a code buried in the message.
+            response.status = 200 <= response.status_code < 300
 
         except Exception as e:
             error_msg = f"Error handling controller_request '{cmd}': {e}"

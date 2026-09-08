@@ -56,8 +56,10 @@ services:
       # survive a rebuild.
       - vscode-server:/root/.vscode-server
       - claude-home:/root/.claude
+      - codex-home:/root/.codex
     command: sleep infinity
 
 volumes:
   vscode-server:
   claude-home:
+  codex-home:

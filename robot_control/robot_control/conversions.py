@@ -21,15 +21,13 @@ _CONFDATA = "[0,0,0,0]"
 def _pose_fields(pose: Pose) -> tuple[str, str]:
     """Position and orientation of a pose in ABB's text form.
 
-    ABB writes a quaternion w,x,y,z where ROS writes it x,y,z,w.
-
-    UNVERIFIED - units. An ABB robtarget is in millimetres and a ROS pose is in
-    metres, but nothing scales here or anywhere upstream. Either the RAPID
-    routine multiplies by 1000 or these coordinates are off by that factor.
+    A ROS pose is metres, an ABB robtarget millimetres, and the RAPID side does
+    no scaling - so it happens here. ABB writes a quaternion w,x,y,z where ROS
+    writes it x,y,z,w.
     """
     p = pose.position
     o = pose.orientation
-    position = f"[{p.x:.3f},{p.y:.3f},{p.z:.3f}]"
+    position = f"[{p.x * 1000:.3f},{p.y * 1000:.3f},{p.z * 1000:.3f}]"
     orientation = f"[{o.w:.6f},{o.x:.6f},{o.y:.6f},{o.z:.6f}]"
     return position, orientation
 

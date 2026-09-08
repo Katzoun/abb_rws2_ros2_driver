@@ -101,11 +101,6 @@ class RWSInterface(RWSClient):
         """Robot type, for example CRB 15000-10/1.52."""
         return self.get_generic("/rw/system/robottype", "robot-type")
 
-    def get_network_info(self) -> RWSResult:
-        # TODO FIX does not work
-        """Network information, as a JSON string."""
-        return self.get_generic_json("/ctrl/network")
-
     def get_system_options(self) -> RWSResult:
         """System options, as a JSON string."""
         return self.get_generic_json("/rw/system/options")
@@ -117,16 +112,6 @@ class RWSInterface(RWSClient):
     def get_energy_info(self) -> RWSResult:
         """Energy information, as a JSON string."""
         return self.get_generic_json("/rw/system/energy")
-
-    def get_mechunits(self) -> RWSResult:
-        # TODO FIX does not work
-        """Mechanical unit information, as a JSON string."""
-        return self.get_generic_json("/rw/motionsystem/mechunits")
-
-    def get_rapid_modules(self) -> RWSResult:
-        # TODO FIX does not work
-        """Returns (The list of RAPID modules as JSON string, http_status_code)."""
-        return self.get_generic_json("/rw/rapid/modules")
 
     def get_leadthrough_state(self, mechunit_name: str = "ROB_1") -> RWSResult:
         """Returns (The leadthrough state of the robot, http_status_code)."""
