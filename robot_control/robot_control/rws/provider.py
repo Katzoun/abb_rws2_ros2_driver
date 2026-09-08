@@ -11,8 +11,8 @@ from typing import Any, NamedTuple, Protocol
 import requests
 from requests.auth import HTTPBasicAuth
 
-requests.packages.urllib3.disable_warnings(
-    requests.packages.urllib3.exceptions.InsecureRequestWarning
+requests.packages.urllib3.disable_warnings(  # type: ignore
+    requests.packages.urllib3.exceptions.InsecureRequestWarning  # type: ignore
 )
 
 # No usable HTTP status: transport failed, nothing was sent, or the body was
@@ -38,9 +38,9 @@ class SupportsLogging(Protocol):
     The rclpy logger and DefaultLogger share no base class, so match on shape.
     """
 
-    def info(self, msg: str) -> None: ...
+    def info(self, msg: str, /) -> object: ...
 
-    def error(self, msg: str) -> None: ...
+    def error(self, msg: str, /) -> object: ...
 
 
 class DefaultLogger:

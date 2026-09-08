@@ -734,7 +734,7 @@ class RWSInterface(RWSClient):
                 raise ValueError(f"Unsupported motion command: {motion_command}")
             if motion_command == RobotControllerConstants.MotionCommands.MOVE_L:
                 routine_name = RobotControllerConstants.Routines.SINGLE_MOVE_L
-            elif motion_command == RobotControllerConstants.MotionCommands.MOVE_J:
+            else:
                 routine_name = RobotControllerConstants.Routines.SINGLE_MOVE_J
 
             writes = [

@@ -35,6 +35,7 @@ from rclpy.executors import MultiThreadedExecutor
 from rclpy.lifecycle import Node as LifecycleNode
 from rclpy.lifecycle import State, TransitionCallbackReturn
 from rclpy.parameter import Parameter
+from rclpy.timer import Timer
 from sensor_msgs.msg import JointState
 
 from robot_control.constants import RobotControllerConstants as RCC
@@ -183,10 +184,10 @@ class RobotControllerNode(LifecycleNode):
         self.logger = self.get_logger()
         self.cb_group = ReentrantCallbackGroup()
 
-        self.RWS = None
+        self.RWS: RWSInterface | None = None
         self._logged_in = False
-        self.keepalive_timer = None
-        self.joint_states_timer = None
+        self.keepalive_timer: Timer | None = None
+        self.joint_states_timer: Timer | None = None
 
         # rclpy exposes no supported accessor for the current lifecycle state,
         # so the goal callbacks read this instead.
@@ -240,6 +241,34 @@ class RobotControllerNode(LifecycleNode):
 
         self.logger.info(f"Boot of {RCC.NODE_NAME} complete, waiting for configuration")
 
+    # ============= TYPED PARAMETER ACCESS =============
+    # Parameter.value is untyped in rclpy, so every read is Unknown | None to
+    # a checker. These narrow it to what ParameterDescriptor already declared
+
+    def _param_str(self, key: str) -> str:
+        value = self.get_parameter(key).value
+        if not isinstance(value, str):
+            raise TypeError(f"Parameter {key} is not a string: {value!r}")
+        return value
+
+    def _param_int(self, key: str) -> int:
+        value = self.get_parameter(key).value
+        if not isinstance(value, int):
+            raise TypeError(f"Parameter {key} is not an int: {value!r}")
+        return value
+
+    def _param_float(self, key: str) -> float:
+        value = self.get_parameter(key).value
+        if not isinstance(value, (int, float)):
+            raise TypeError(f"Parameter {key} is not a float: {value!r}")
+        return float(value)
+
+    def _param_bool(self, key: str) -> bool:
+        value = self.get_parameter(key).value
+        if not isinstance(value, bool):
+            raise TypeError(f"Parameter {key} is not a bool: {value!r}")
+        return value
+
     # ============= LIFECYCLE TRANSITIONS =============
 
     def _reload_parameters_from_file(self) -> None:
@@ -247,7 +276,7 @@ class RobotControllerNode(LifecycleNode):
 
         Launch loads it only at start-up. The file wins over `ros2 param set`.
         """
-        path = self.get_parameter(ParamKeys.CONFIG_FILE).value
+        path = self._param_str(ParamKeys.CONFIG_FILE)
         if not path:
             return
 
@@ -269,9 +298,20 @@ class RobotControllerNode(LifecycleNode):
         updates = [
             Parameter(name, value=value) for name, value in entries if name in declared
         ]
-        if updates:
-            self.set_parameters(updates)
-        self.logger.info(f"Reloaded {len(updates)} parameters from {path}")
+        results = self.set_parameters(updates) if updates else []
+
+        failed = [
+            f"{u.name} ({r.reason})"
+            for u, r in zip(updates, results, strict=True)
+            if not r.successful
+        ]
+        if failed:
+            self.logger.error(
+                f"Rejected by {path}, kept old value: {', '.join(failed)}"
+            )
+
+        applied = len(updates) - len(failed)
+        self.logger.info(f"Reloaded {applied} parameters from {path}")
 
     def on_configure(self, state: State) -> TransitionCallbackReturn:
         """Open the robot session. Every connection setting is read here."""
@@ -287,28 +327,26 @@ class RobotControllerNode(LifecycleNode):
 
         try:
             self.logger.info("Initializing RWSInterface...")
-            self.RWS = RWSInterface(
-                host=self.get_parameter(ParamKeys.IP_ADDRESS).value,
-                username=self.get_parameter(ParamKeys.USERNAME).value,
-                password=self.get_parameter(ParamKeys.PASSWORD).value,
-                port=self.get_parameter(ParamKeys.PORT).value,
+            rws = RWSInterface(
+                host=self._param_str(ParamKeys.IP_ADDRESS),
+                username=self._param_str(ParamKeys.USERNAME),
+                password=self._param_str(ParamKeys.PASSWORD),
+                port=self._param_int(ParamKeys.PORT),
                 logger=self.logger,
             )
         except Exception as e:
             self.logger.error(f"Failed to initialize RWSInterface: {e}")
-            self.RWS = None
             return TransitionCallbackReturn.FAILURE
 
         try:
-            if not self.RWS.login():
+            if not rws.login():
                 self.logger.error("Login failed, cannot configure")
-                self.RWS = None
                 return TransitionCallbackReturn.FAILURE
         except Exception as e:
             self.logger.error(f"Login failed: {e}")
-            self.RWS = None
             return TransitionCallbackReturn.FAILURE
 
+        self.RWS = rws
         self._logged_in = True
         self.logger.info("Login successful")
         return TransitionCallbackReturn.SUCCESS
@@ -319,14 +357,14 @@ class RobotControllerNode(LifecycleNode):
             self.logger.error("Not logged in to the robot, cannot activate")
             return TransitionCallbackReturn.FAILURE
 
-        if self.get_parameter(ParamKeys.SEND_KEEPALIVE).value:
-            period = self.get_parameter(ParamKeys.KEEPALIVE_INTERVAL).value
+        if self._param_bool(ParamKeys.SEND_KEEPALIVE):
+            period = self._param_float(ParamKeys.KEEPALIVE_INTERVAL)
             self.keepalive_timer = self.create_timer(
                 period, self.keepalive_callback, callback_group=self.cb_group
             )
 
-        if self.get_parameter(ParamKeys.SEND_JOINT_STATES).value:
-            period = self.get_parameter(ParamKeys.JOINT_STATES_HZ).value
+        if self._param_bool(ParamKeys.SEND_JOINT_STATES):
+            period = self._param_float(ParamKeys.JOINT_STATES_HZ)
             period = (
                 1.0 / period if period > 0 else 1.0
             )  # Convert Hz to seconds, default to 1 Hz if invalid
@@ -388,6 +426,9 @@ class RobotControllerNode(LifecycleNode):
             self.logger.info("Sending keepalive signal...")
             self._logged_in = False
             try:
+                if self.RWS is None:
+                    self.logger.error("Keepalive skipped: no robot session")
+                    return
                 # send_keepalive reports the outcome itself.
                 if self.RWS.send_keepalive():
                     self._logged_in = True
@@ -402,6 +443,9 @@ class RobotControllerNode(LifecycleNode):
     def joint_states_callback(self):
         if self._logged_in:
             try:
+                if self.RWS is None:
+                    self.logger.error("Joint states skipped: no robot session")
+                    return
                 result_json, status_code = self.RWS.get_robot_joint_positions()
                 if status_code != 200:
                     self.logger.warning(
@@ -472,6 +516,11 @@ class RobotControllerNode(LifecycleNode):
             return GoalResponse.REJECT
 
         try:
+            if self.RWS is None:
+                self.logger.error("Goal rejected: robot state client is unavailable")
+                self._unclaim()
+                return GoalResponse.REJECT
+
             if not self.RWS.is_rapid_idle():
                 self.logger.error("Goal rejected: Robot is not in idle state")
                 self._unclaim()
@@ -487,7 +536,7 @@ class RobotControllerNode(LifecycleNode):
         return GoalResponse.ACCEPT
 
     def goal_callback_joint(self, goal_request: ExecuteJointArray.Goal) -> GoalResponse:
-        waypoints: list[RobotJoints] = goal_request.waypoints
+        waypoints: list[RobotJoints] = list(goal_request.waypoints)
         self.logger.info(
             f"Received joint trajectory goal with {len(waypoints)} waypoints"
         )
@@ -524,7 +573,7 @@ class RobotControllerNode(LifecycleNode):
 
     # ============= ACTION SERVER CALLBACKS =============
 
-    def _start_routine(self, routine_name: str, speed):
+    def _start_routine(self, rws: RWSInterface, routine_name: str, speed):
         """Point the RAPID program at a routine and set it running.
 
         A symbol that does not take leaves the robot on the previous routine,
@@ -537,7 +586,7 @@ class RobotControllerNode(LifecycleNode):
         ]
 
         for value, symbol, module, settle_s in writes:
-            message, status = self.RWS.set_rapid_symbol_raw(value, symbol, module)
+            message, status = rws.set_rapid_symbol_raw(value, symbol, module)
             if status != 204:
                 raise RuntimeError(
                     f"Could not set RAPID symbol {symbol} in {module}: "
@@ -564,19 +613,19 @@ class RobotControllerNode(LifecycleNode):
 
         try:
             # Inside the try: a throw out here would leave the goal unterminated.
-            dipc_retry_max = self.get_parameter(ParamKeys.DIPC_RETRY_MAX).value
-            dipc_retry_delay_s = self.get_parameter(ParamKeys.DIPC_RETRY_DELAY_S).value
+            if self.RWS is None:
+                raise RuntimeError("No robot session, configure the node first")
+            rws = self.RWS
+
+            dipc_retry_max = self._param_int(ParamKeys.DIPC_RETRY_MAX)
+            dipc_retry_delay_s = self._param_float(ParamKeys.DIPC_RETRY_DELAY_S)
 
             MC = RCC.MotionCommands
-            if goal.motion_command not in [MC.MOVE_L, MC.MOVE_J]:
+            routines = {MC.MOVE_L: RCC.Routines.MOVE_L, MC.MOVE_J: RCC.Routines.MOVE_J}
+            if goal.motion_command not in routines:
                 raise ValueError(f"Unsupported motion command: {goal.motion_command}")
 
-            if goal.motion_command == MC.MOVE_L:
-                routine_name = RCC.Routines.MOVE_L
-            elif goal.motion_command == MC.MOVE_J:
-                routine_name = RCC.Routines.MOVE_J
-
-            self._start_routine(routine_name, goal.speed)
+            self._start_routine(rws, routines[goal.motion_command], goal.speed)
 
         except Exception as e:
             error_msg = f"Error in execute_pose_array_cb: {e}"
@@ -621,7 +670,7 @@ class RobotControllerNode(LifecycleNode):
                         )
                         userdef = "2"
 
-                    _, status_code = self.RWS.send_dipc_message(
+                    _, status_code = rws.send_dipc_message(
                         message=robtarget_str, userdef=userdef
                     )
 
@@ -702,23 +751,23 @@ class RobotControllerNode(LifecycleNode):
 
         try:
             # Inside the try, for the same reason as in _execute_pose_array.
-            dipc_retry_max = self.get_parameter(ParamKeys.DIPC_RETRY_MAX).value
-            dipc_retry_delay_s = self.get_parameter(ParamKeys.DIPC_RETRY_DELAY_S).value
+            if self.RWS is None:
+                raise RuntimeError("No robot session, configure the node first")
+            rws = self.RWS
 
-            waypoints: list[RobotJoints] = goal.waypoints
+            dipc_retry_max = self._param_int(ParamKeys.DIPC_RETRY_MAX)
+            dipc_retry_delay_s = self._param_float(ParamKeys.DIPC_RETRY_DELAY_S)
 
-            if goal.motion_command not in [
-                RCC.MotionCommands.MOVE_ABS_J,
-                RCC.MotionCommands.MOVE_ABS_L,
-            ]:
+            waypoints: list[RobotJoints] = list(goal.waypoints)
+
+            routines = {
+                RCC.MotionCommands.MOVE_ABS_J: RCC.Routines.MOVE_ABS_J,
+                RCC.MotionCommands.MOVE_ABS_L: RCC.Routines.MOVE_ABS_L,
+            }
+            if goal.motion_command not in routines:
                 raise ValueError(f"Unsupported motion command: {goal.motion_command}")
 
-            if goal.motion_command == RCC.MotionCommands.MOVE_ABS_J:
-                routine_name = RCC.Routines.MOVE_ABS_J
-            elif goal.motion_command == RCC.MotionCommands.MOVE_ABS_L:
-                routine_name = RCC.Routines.MOVE_ABS_L
-
-            self._start_routine(routine_name, goal.speed)
+            self._start_routine(rws, routines[goal.motion_command], goal.speed)
 
         except Exception as e:
             error_msg = f"Error in execute_joint_array_cb setup: {e}"
@@ -760,7 +809,7 @@ class RobotControllerNode(LifecycleNode):
                         )
                         userdef = "2"
 
-                    _, status_code = self.RWS.send_dipc_message(
+                    _, status_code = rws.send_dipc_message(
                         message=jointtarget_str, userdef=userdef
                     )
 
