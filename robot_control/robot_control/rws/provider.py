@@ -3,6 +3,7 @@
 Owns the requests session, the login cookie and the two header sets the
 controller expects, and hands the verbs (GET / POST / OPTIONS) up to
 RWSInterface, which knows the endpoints.
+
 """
 
 from typing import Any, NamedTuple, Protocol
@@ -14,22 +15,13 @@ requests.packages.urllib3.disable_warnings(
     requests.packages.urllib3.exceptions.InsecureRequestWarning
 )
 
-# Status for a call that never reached the controller, because a precondition
-# failed first. It is not an HTTP code and the controller never produces it.
-NOT_SENT = -1
+# No usable HTTP status: transport failed, nothing was sent, or the body was
+# unreadable. Never produced by the controller.
+NO_STATUS = -1
 
 
 class RWSResult(NamedTuple):
-    """What every RWSInterface call answers with.
-
-    Still a plain two-tuple, so `message, status = client.motors_on()` keeps
-    working. What it adds is one place that decides what counts as success:
-    GETs come back 200 but POSTs come back 204, so comparing against a single
-    number at the call site is a mistake waiting to happen.
-
-    On a successful read `message` carries the payload; on a failure it carries
-    the reason, prefixed with "ERR - ". Test `ok` rather than the prefix.
-    """
+    """What every RWSInterface call answers with."""
 
     message: str
     status: int
@@ -43,9 +35,7 @@ class RWSResult(NamedTuple):
 class SupportsLogging(Protocol):
     """The two logger methods this layer calls.
 
-    The node passes in an rclpy logger and the fallback below is a plain
-    printer. They share no base class, so what ties them together is the shape
-    of their interface, not their ancestry - which is what Protocol is for.
+    The rclpy logger and DefaultLogger share no base class, so match on shape.
     """
 
     def info(self, msg: str) -> None: ...
@@ -54,11 +44,7 @@ class SupportsLogging(Protocol):
 
 
 class DefaultLogger:
-    """Fallback for when nobody passes a logger in.
-
-    Satisfies SupportsLogging without inheriting from it, which is the whole
-    point of the protocol - the same way the rclpy logger does.
-    """
+    """Fallback for when no logger is passed in."""
 
     @staticmethod
     def info(msg: str) -> None:
@@ -78,17 +64,13 @@ class RWSClient:
         port: int = 80,
         logger: SupportsLogging | None = None,
     ) -> None:
-        # https even on port 80: the controller speaks TLS on both ports, the
-        # number only selects which service answers. Plain http gets refused.
+        # https even on port 80 - the controller speaks TLS on both ports.
         proto = "https"
         self.base_url = f"{proto}://{host}:{port}"
         self.session = requests.Session()
         self._logged_in = False
         self.timeout_sec = 2  # seconds
         self.logger: SupportsLogging = DefaultLogger() if logger is None else logger
-
-        # The controller serves a self-signed certificate that no CA vouches
-        # for, so verification would fail against every real robot.
         self.session.verify = False
         self.auth_method = HTTPBasicAuth(username, password)
         self.header_typ = {
@@ -124,7 +106,7 @@ class RWSClient:
 
         except Exception as e:
             self.logger.error(f"Login request failed, check connection: {e}")
-            raise ConnectionError(f"Login request failed: {e}") from e
+            return False
 
     def logout(self) -> bool:
         """Log out and close the session. Returns True on success."""
@@ -152,7 +134,7 @@ class RWSClient:
 
         except Exception as e:
             self.logger.error(f"Logout request failed, message: {e}")
-            raise ConnectionError(f"Logout request failed: {e}") from e
+            return False
 
     def get_login_state(self) -> bool:
         """Check if the session is still logged in."""
@@ -165,7 +147,7 @@ class RWSClient:
 
         except Exception as e:
             self.logger.error(f"Login state request failed, message: {e}")
-            raise ConnectionError(f"Login state request failed: {e}") from e
+            return False
 
     def send_keepalive(self) -> bool:
         """Send a lightweight GET to keep the connection alive."""
@@ -188,7 +170,7 @@ class RWSClient:
         except Exception as e:
             self.logger.error(f"Keepalive request failed: {e}")
             self._logged_in = False
-            raise ConnectionError(f"Keepalive request failed: {e}") from e
+            return False
 
     def get_request(self, path: str) -> tuple[Any | None, int]:
         """Send a GET request. Returns (json_data, status_code)."""
@@ -204,7 +186,7 @@ class RWSClient:
             return (resp.json() if resp.content else None, resp.status_code)
         except Exception as e:
             self.logger.error(f"GET request {path} failed: {e}")
-            return (None, (-1))
+            return (None, NO_STATUS)
 
     def post_request(self, path: str, dataIn: Any | None = None) -> int:
         """Send a POST request. Returns the HTTP status code."""
@@ -225,7 +207,7 @@ class RWSClient:
 
         except Exception as e:
             self.logger.error(f"POST request {path} failed: {e}")
-            return -1
+            return NO_STATUS
 
     def options_request(self, path: str) -> tuple[Any | None, int]:
         """Send an OPTIONS request. Returns (json_data, status_code)."""
@@ -242,4 +224,4 @@ class RWSClient:
 
         except Exception as e:
             self.logger.error(f"OPTIONS request {path} failed: {e}")
-            return (None, (-1))
+            return (None, NO_STATUS)

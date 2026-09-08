@@ -4,10 +4,11 @@ contains the endpoints and their payloads.
 
 import json
 import time
+from collections.abc import Sequence
 from typing import Any
 
 from robot_control.constants import RobotControllerConstants
-from robot_control.rws.provider import NOT_SENT, RWSClient, RWSResult, SupportsLogging
+from robot_control.rws.provider import NO_STATUS, RWSClient, RWSResult, SupportsLogging
 
 
 class RWSInterface(RWSClient):
@@ -29,31 +30,37 @@ class RWSInterface(RWSClient):
 
         super().__init__(host, username, password, port=port, logger=logger)
 
+    # A failed GET still has a body, but it describes the error and carries no
+    # "state" - so check the status before reaching for the payload.
     def get_generic(self, endpoint: str, feature: str) -> RWSResult:
         (data, status) = self.get_request(endpoint)
-        if data is None:
-            return RWSResult(f"ERR - No data returned by {endpoint}", status)
+        if status != 200 or data is None:
+            return RWSResult(f"ERR - GET {endpoint} answered {status}", status)
 
-        data = data["state"][0]
-        return RWSResult(data.get(feature, "unknown").lower(), status)
+        state = data.get("state") or []
+        if not state:
+            return RWSResult(f"ERR - {endpoint} returned no state", NO_STATUS)
+
+        return RWSResult(state[0].get(feature, "unknown").lower(), status)
 
     def get_embed_json(self, endpoint: str) -> RWSResult:
         (data, status) = self.get_request(endpoint)
-        if data is None:
-            return RWSResult(f"ERR - No data returned by {endpoint}", status)
+        if status != 200 or data is None:
+            return RWSResult(f"ERR - GET {endpoint} answered {status}", status)
 
-        data = data.get("_embedded", {}).get("resources", [])
-        data_json = json.dumps(data, indent=2)
-        return RWSResult(data_json, status)
+        resources = data.get("_embedded", {}).get("resources", [])
+        return RWSResult(json.dumps(resources, indent=2), status)
 
     def get_generic_json(self, endpoint: str) -> RWSResult:
         (data, status) = self.get_request(endpoint)
-        if data is None:
-            return RWSResult(f"ERR - No data returned by {endpoint}", status)
+        if status != 200 or data is None:
+            return RWSResult(f"ERR - GET {endpoint} answered {status}", status)
 
-        data = data["state"]
-        data_json = json.dumps(data, indent=2)
-        return RWSResult(data_json, status)
+        state = data.get("state")
+        if state is None:
+            return RWSResult(f"ERR - {endpoint} returned no state", NO_STATUS)
+
+        return RWSResult(json.dumps(state, indent=2), status)
 
     def get_clock(self) -> RWSResult:
         """The controller clock."""
@@ -71,18 +78,19 @@ class RWSInterface(RWSClient):
         """Returns (The current safety mode of the robot, http_status_code)."""
         return self.get_generic("/ctrl/safety/mode", "safetymode")
 
-    def get_rapid_retcode(self, retcode_name: str) -> RWSResult:
+    # These three return the parsed body, not an RWSResult like the rest.
+    def get_rapid_retcode(self, retcode_name: str) -> tuple[Any | None, int]:
         """Returns (RAPID return code value, http_status_code)."""
         if not retcode_name:
             raise ValueError("Return code name cannot be empty")
         return self.get_request(f"/rw/retcode/?code={retcode_name}")
 
-    def get_user_uas(self) -> RWSResult:
-        """Returns (The user-defined UAS variables as JSON string, http_status_code)."""
+    def get_user_uas(self) -> tuple[Any | None, int]:
+        """Returns (the user-defined UAS variables, http_status_code)."""
         return self.get_request("/uas/user/grants")
 
-    def get_all_grants(self) -> RWSResult:
-        """Returns (The user-defined UAS variables as JSON string, http_status_code)."""
+    def get_all_grants(self) -> tuple[Any | None, int]:
+        """Returns (the user-defined UAS variables, http_status_code)."""
         return self.get_request("/uas/grants")
 
     def get_speedratio(self) -> RWSResult:
@@ -154,11 +162,22 @@ class RWSInterface(RWSClient):
         self, mechunit_name: str = "ROB_1", num_ax: int = 6
     ) -> RWSResult:
         """Returns (The robot joint positions as JSON string, http_status_code)."""
-        result_json, status = self.get_generic_json(
+        result = self.get_generic_json(
             f"/rw/motionsystem/mechunits/{mechunit_name}/jointtarget"
         )
+        # On failure the message is the reason, not JSON.
+        if not result.ok:
+            return result
+
+        status = result.status
+        state = json.loads(result.message)
+        if not state:
+            return RWSResult(
+                f"ERR - {mechunit_name} returned no jointtarget", NO_STATUS
+            )
+
         # extract rax_1 to rax_6 from json
-        data = json.loads(result_json)[0]
+        data = state[0]
         joint_positions = {}
         for i in range(1, num_ax + 1):
             joint_key = f"rax_{i}"
@@ -307,7 +326,7 @@ class RWSInterface(RWSClient):
     def restart_controller(self) -> RWSResult:
         """Restart the robot controller. Requires mastership on both domains."""
         if not (self.is_master("edit") and self.is_master("motion")):
-            return RWSResult("ERR - Mastership on both domains is required", NOT_SENT)
+            return RWSResult("ERR - Mastership on both domains is required", NO_STATUS)
 
         status = self.post_request(
             "/rw/panel/restart", dataIn={"restart-mode": "restart"}
@@ -682,6 +701,27 @@ class RWSInterface(RWSClient):
         else:
             return RWSResult("Robot is already running", 200)
 
+    def apply_rapid_writes(
+        self, writes: Sequence[tuple[str, str, str, float]]
+    ) -> RWSResult:
+        """Set a series of RAPID symbols, stopping at the first failure.
+
+        Entries are (value, symbol, module, settle_s). Reporting OK after a
+        failed write would leave the robot on the previous routine.
+        """
+        for value, symbol, module, settle_s in writes:
+            write = self.set_rapid_symbol_raw(value, symbol, module)
+            if not write.ok:
+                self.logger.error(
+                    f"Failed to set RAPID symbol {symbol}: {write.message}"
+                )
+                return RWSResult(
+                    f"ERR - Failed to set RAPID symbol {symbol}", write.status
+                )
+            time.sleep(settle_s)
+
+        return RWSResult("OK", 200)
+
     def run_move_command(
         self, motion_command: str, robtarget: str, speed: str
     ) -> RWSResult:
@@ -697,10 +737,6 @@ class RWSInterface(RWSClient):
             elif motion_command == RobotControllerConstants.MotionCommands.MOVE_J:
                 routine_name = RobotControllerConstants.Routines.SINGLE_MOVE_J
 
-            # Each write is checked: reporting OK after a symbol failed to
-            # take would leave the robot running the previous routine while
-            # the caller believes the new one started. The delays give the
-            # controller a moment before the next write lands.
             writes = [
                 (
                     f'"{routine_name}"',
@@ -728,28 +764,16 @@ class RWSInterface(RWSClient):
                 ),
             ]
 
-            for value, symbol, module, settle_s in writes:
-                write = self.set_rapid_symbol_raw(value, symbol, module)
-                if not write.ok:
-                    self.logger.error(
-                        f"Failed to set RAPID symbol {symbol}: {write.message}"
-                    )
-                    return RWSResult(
-                        f"ERR - Failed to set RAPID symbol {symbol}", write.status
-                    )
-                time.sleep(settle_s)
-
-            return RWSResult("OK", 200)
+            return self.apply_rapid_writes(writes)
 
         else:
             return RWSResult(
-                "ERR - Cannot execute motion command while RAPID is not idle", NOT_SENT
+                "ERR - Cannot execute motion command while RAPID is not idle", NO_STATUS
             )
 
     def run_rapid_routine(self, routine_name: str) -> RWSResult:
         """Run a RAPID routine on the robot."""
         if self.is_rapid_idle():
-            # Checked for the same reason as in run_move_command above.
             writes = [
                 (
                     f'"{routine_name}"',
@@ -765,20 +789,9 @@ class RWSInterface(RWSClient):
                 ),
             ]
 
-            for value, symbol, module, settle_s in writes:
-                write = self.set_rapid_symbol_raw(value, symbol, module)
-                if not write.ok:
-                    self.logger.error(
-                        f"Failed to set RAPID symbol {symbol}: {write.message}"
-                    )
-                    return RWSResult(
-                        f"ERR - Failed to set RAPID symbol {symbol}", write.status
-                    )
-                time.sleep(settle_s)
-
-            return RWSResult("OK", 200)
+            return self.apply_rapid_writes(writes)
 
         else:
             return RWSResult(
-                "ERR - Cannot execute RAPID routine while RAPID is not idle", NOT_SENT
+                "ERR - Cannot execute RAPID routine while RAPID is not idle", NO_STATUS
             )

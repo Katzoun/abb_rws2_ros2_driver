@@ -1,26 +1,20 @@
 """The RWS side of the system: a managed node that owns the robot session.
 
-Ported from the intra project's intranodes_pkg/robot_controller_node.py. That
-node ran a hand-rolled state machine (core_pkg/nodes_core.py) over a plain
-rclpy Node; here the same states are expressed as a real ROS 2 lifecycle:
+Ported from the intra project's intranodes_pkg/robot_controller_node.py, whose
+hand-rolled state machine maps onto the ROS 2 lifecycle:
 
-    not_initialized   ->  unconfigured
-    initialize_node   ->  on_configure  (read parameters, log in to the robot)
-                      +   on_activate   (start the timers, open up for goals)
-    cleanup_resources ->  on_cleanup    (log out, drop the session)
+unconfigured
+on_configure  (read parameters, log in to the robot)
+on_activate   (start the timers, open up for goals)
+on_cleanup    (log out, drop the session)
 
-Configuration is reloaded by taking the node back around that loop:
+The parameter file is re-read on every configure, so a changed YAML takes
+effect without restarting the process:
 
     ros2 lifecycle set /robot_controller deactivate
     ros2 lifecycle set /robot_controller cleanup
-    ros2 param set /robot_controller connection.ip_address 192.168.0.37
     ros2 lifecycle set /robot_controller configure
     ros2 lifecycle set /robot_controller activate
-
-The original had a busy state that doubled as an admission gate: a goal was
-accepted only if the idle -> busy transition was legal, which kept two
-trajectories from ever overlapping. The lifecycle has no such state, so that
-job is done here by an explicit claim (see _claim).
 """
 
 import inspect
@@ -31,6 +25,7 @@ from dataclasses import dataclass
 from math import radians
 
 import rclpy
+import yaml
 from geometry_msgs.msg import PoseStamped
 from rcl_interfaces.msg import ParameterDescriptor
 from rclpy.action import ActionServer, CancelResponse, GoalResponse
@@ -45,6 +40,7 @@ from sensor_msgs.msg import JointState
 from robot_control.constants import RobotControllerConstants as RCC
 from robot_control.conversions import joints_to_dipc_jointtarget, pose_to_dipc_robtarget
 from robot_control.rws.interface import RWSInterface
+from robot_control.rws.provider import NO_STATUS
 from robot_control_msgs.action import ExecuteJointArray, ExecutePoseArray
 from robot_control_msgs.msg import RobotJoints
 from robot_control_msgs.srv import RobotRequestSrv
@@ -52,6 +48,7 @@ from robot_control_msgs.srv import RobotRequestSrv
 
 @dataclass(frozen=True)
 class ParamKeys:
+    CONFIG_FILE = "config_file"
     IP_ADDRESS = "connection.ip_address"
     PORT = "connection.port"
     USERNAME = "connection.username"
@@ -64,10 +61,17 @@ class ParamKeys:
     DIPC_RETRY_DELAY_S = "dipc.retry_delay_s"
 
 
-# The defaults match config/robot_control.yaml, which is what the launch file
-# loads. They only come into play when the node is started bare, without a
-# parameter file.
+# Defaults match config/robot_control.yaml; they only apply when the node is
+# started without a parameter file.
 PARAMETER_DECLARATIONS = [
+    (
+        ParamKeys.CONFIG_FILE,
+        "",
+        ParameterDescriptor(
+            description="YAML to re-read on every configure. Empty disables the reload.",
+            type=Parameter.Type.STRING.value,
+        ),
+    ),
     (
         ParamKeys.IP_ADDRESS,
         "192.168.0.31",
@@ -159,6 +163,20 @@ JOINT_NAMES = [
 ]
 
 
+def flatten_ros_parameters(
+    values: dict[str, object], prefix: str = ""
+) -> list[tuple[str, object]]:
+    """Turn the nested YAML into the dotted keys the node declares."""
+    flat: list[tuple[str, object]] = []
+    for key, value in values.items():
+        name = f"{prefix}{key}"
+        if isinstance(value, dict):
+            flat.extend(flatten_ros_parameters(value, f"{name}."))
+        else:
+            flat.append((name, value))
+    return flat
+
+
 class RobotControllerNode(LifecycleNode):
     def __init__(self):
         super().__init__(RCC.NODE_NAME)
@@ -224,12 +242,47 @@ class RobotControllerNode(LifecycleNode):
 
     # ============= LIFECYCLE TRANSITIONS =============
 
+    def _reload_parameters_from_file(self) -> None:
+        """Re-read the parameter file so an edited YAML takes effect here.
+
+        Launch loads it only at start-up. The file wins over `ros2 param set`.
+        """
+        path = self.get_parameter(ParamKeys.CONFIG_FILE).value
+        if not path:
+            return
+
+        with open(path) as handle:
+            document = yaml.safe_load(handle) or {}
+
+        # A parameter file addresses the node by name, or by the /** wildcard.
+        section = document.get(self.get_name()) or document.get("/**") or {}
+        entries = flatten_ros_parameters(section.get("ros__parameters", {}))
+
+        declared = {name for name, _, _ in PARAMETER_DECLARATIONS}
+        unknown = [name for name, _ in entries if name not in declared]
+        if unknown:
+            self.logger.warning(
+                f"Ignoring keys in {path} that the node does not declare: "
+                f"{', '.join(sorted(unknown))}"
+            )
+
+        updates = [
+            Parameter(name, value=value) for name, value in entries if name in declared
+        ]
+        if updates:
+            self.set_parameters(updates)
+        self.logger.info(f"Reloaded {len(updates)} parameters from {path}")
+
     def on_configure(self, state: State) -> TransitionCallbackReturn:
-        """Open the robot session. Everything the connection needs is read here,
-        which is why changing a parameter means cleaning up and configuring
-        again for it to take effect."""
+        """Open the robot session. Every connection setting is read here."""
         if self.RWS is not None or self._logged_in:
             self.logger.error("Already configured, clean up before configuring again")
+            return TransitionCallbackReturn.FAILURE
+
+        try:
+            self._reload_parameters_from_file()
+        except Exception as e:
+            self.logger.error(f"Could not read the parameter file: {e}")
             return TransitionCallbackReturn.FAILURE
 
         try:
@@ -248,7 +301,7 @@ class RobotControllerNode(LifecycleNode):
 
         try:
             if not self.RWS.login():
-                self.logger.error("Login failed: the controller refused the session")
+                self.logger.error("Login failed, cannot configure")
                 self.RWS = None
                 return TransitionCallbackReturn.FAILURE
         except Exception as e:
@@ -324,6 +377,9 @@ class RobotControllerNode(LifecycleNode):
         finally:
             self.RWS = None
             self._logged_in = False
+            # Claimed in one callback, dropped in another: a goal that never
+            # reaches execute would shut the gate for good.
+            self._busy = False
 
     # ============= TIMER CALLBACKS =============
 
@@ -332,12 +388,11 @@ class RobotControllerNode(LifecycleNode):
             self.logger.info("Sending keepalive signal...")
             self._logged_in = False
             try:
-                result = self.RWS.send_keepalive()
-                if result == True:
+                # send_keepalive reports the outcome itself.
+                if self.RWS.send_keepalive():
                     self._logged_in = True
-                    self.logger.info("Keepalive successful")
                 else:
-                    self.logger.error("Keepalive failed: No response from robot")
+                    self.logger.error("Keepalive failed, treating session as lost")
 
             except Exception as e:
                 self.logger.error(f"Keepalive failed: {e}")
@@ -379,7 +434,11 @@ class RobotControllerNode(LifecycleNode):
     # ============= GOAL ADMISSION =============
 
     def _claim(self) -> bool:
-        """Take the robot for one goal. False means another goal already has it."""
+        """Take the robot for one goal. False means another goal already has it.
+
+        Covers only the sending phase; the motion is guarded by the is_rapid_idle
+        check in the goal callbacks - RAPID holds CURRENT_STATE non-zero until done.
+        """
         with self._busy_lock:
             if self._busy:
                 return False
@@ -446,6 +505,11 @@ class RobotControllerNode(LifecycleNode):
             return GoalResponse.REJECT
 
         try:
+            if self.RWS is None:
+                self.logger.error("Goal rejected: robot state client is unavailable")
+                self._unclaim()
+                return GoalResponse.REJECT
+
             if not self.RWS.is_rapid_idle():
                 self.logger.error("Goal rejected: robot not idle")
                 self._unclaim()
@@ -463,10 +527,8 @@ class RobotControllerNode(LifecycleNode):
     def _start_routine(self, routine_name: str, speed):
         """Point the RAPID program at a routine and set it running.
 
-        Every write is checked. A symbol that does not take means the robot
-        runs the previous routine, or none at all, while we stream a whole
-        trajectory at it - so a failure here has to stop the goal, not just
-        show up in the log.
+        A symbol that does not take leaves the robot on the previous routine,
+        so a failed write has to stop the goal.
         """
         writes = [
             (f'"{routine_name}"', RCC.Symbols.ROUTINE_NAME, RCC.Modules.RAPID, 0.1),
@@ -500,10 +562,11 @@ class RobotControllerNode(LifecycleNode):
     ) -> ExecutePoseArray.Result:
         goal: ExecutePoseArray.Goal = goal_handle.request
 
-        dipc_retry_max = self.get_parameter(ParamKeys.DIPC_RETRY_MAX).value
-        dipc_retry_delay_s = self.get_parameter(ParamKeys.DIPC_RETRY_DELAY_S).value
-
         try:
+            # Inside the try: a throw out here would leave the goal unterminated.
+            dipc_retry_max = self.get_parameter(ParamKeys.DIPC_RETRY_MAX).value
+            dipc_retry_delay_s = self.get_parameter(ParamKeys.DIPC_RETRY_DELAY_S).value
+
             MC = RCC.MotionCommands
             if goal.motion_command not in [MC.MOVE_L, MC.MOVE_J]:
                 raise ValueError(f"Unsupported motion command: {goal.motion_command}")
@@ -558,7 +621,7 @@ class RobotControllerNode(LifecycleNode):
                         )
                         userdef = "2"
 
-                    msg_result, status_code = self.RWS.send_dipc_message(
+                    _, status_code = self.RWS.send_dipc_message(
                         message=robtarget_str, userdef=userdef
                     )
 
@@ -637,10 +700,11 @@ class RobotControllerNode(LifecycleNode):
     ) -> ExecuteJointArray.Result:
         goal: ExecuteJointArray.Goal = goal_handle.request
 
-        dipc_retry_max = self.get_parameter(ParamKeys.DIPC_RETRY_MAX).value
-        dipc_retry_delay_s = self.get_parameter(ParamKeys.DIPC_RETRY_DELAY_S).value
-
         try:
+            # Inside the try, for the same reason as in _execute_pose_array.
+            dipc_retry_max = self.get_parameter(ParamKeys.DIPC_RETRY_MAX).value
+            dipc_retry_delay_s = self.get_parameter(ParamKeys.DIPC_RETRY_DELAY_S).value
+
             waypoints: list[RobotJoints] = goal.waypoints
 
             if goal.motion_command not in [
@@ -774,7 +838,7 @@ class RobotControllerNode(LifecycleNode):
             error_msg = f"Error handling controller_request '{cmd}': {e}"
             self.logger.error(error_msg)
             response.message = error_msg
-            response.status_code = -1
+            response.status_code = NO_STATUS
             response.status = False
 
         self.logger.info(
@@ -841,8 +905,8 @@ def main(args=None):
     try:
         robot_controller_node = RobotControllerNode()
 
-        # Create multithreaded executor with 2 threads
-        executor = MultiThreadedExecutor(num_threads=2)
+        # Create multithreaded executor with 3 threads
+        executor = MultiThreadedExecutor(num_threads=3)
         executor.add_node(robot_controller_node)
 
         executor.spin()
@@ -869,7 +933,7 @@ def main(args=None):
 
         try:
             rclpy.shutdown()
-        except Exception:
+        except Exception:  # noqa: S110
             pass  # rclpy may already be shut down
 
 

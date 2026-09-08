@@ -207,9 +207,10 @@ which the launch file passes to the driver as ROS parameters -
 `connection.password`. The virtual controller usually listens on port 80, the
 physical one on 443.
 
-The file is read on every `configure`, so the driver can be pointed at a
-different controller without restarting it: `cleanup`, `ros2 param set` the new
-values, `configure` again.
+The file is re-read on every `configure`, so the driver can be pointed at a
+different controller without restarting the process: `cleanup`, edit the YAML,
+`configure` again. Because the file is reloaded, it also overwrites anything set
+with `ros2 param set` since the last `configure`.
 
 ## Project Structure
 

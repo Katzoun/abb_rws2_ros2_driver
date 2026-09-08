@@ -1,22 +1,14 @@
 # Parameters for the robot controller node.
-#
-# Values carried over from the intra project's config/robot_config.yaml, but in
-# the standard ROS 2 layout - that file used flat dotted keys under a
-# robot_parameters root, which cannot be fed to Node(parameters=[...]).
-#
-# The node reads every one of these in on_configure, so changing a value means
-# taking the node back through the lifecycle for it to take effect:
+
+# This file is read again on every configure, so changing a value means editing
+# it here and taking the node back through the lifecycle. The process stays up:
 #
 #   ros2 lifecycle set /robot_controller deactivate
 #   ros2 lifecycle set /robot_controller cleanup
-#   ros2 param set /robot_controller connection.ip_address 192.168.0.37
 #   ros2 lifecycle set /robot_controller configure
 #   ros2 lifecycle set /robot_controller activate
 #
-# The RAPID vocabulary - modules, symbols, routine names - is deliberately not
-# here. The driver and the RAPID program on the controller are a matched pair,
-# so those live in robot_control/constants.py.
-#
+# It also overwrites anything set with `ros2 param set`.
 # Change the key below if you rename the node.
 
 robot_controller:
@@ -25,7 +17,7 @@ robot_controller:
     connection:
       # Controllers seen in the lab: 192.168.0.31, 192.168.0.37, 192.168.0.14,
       # 192.168.1.157
-      ip_address: 192.168.0.31
+      ip_address: 192.168.50.10
       # 80 on the virtual controller, 443 on the physical one
       port: 80
       username: Admin

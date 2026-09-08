@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """Starts the robot controller.
 
 It is a managed node, so it comes up unconfigured and touches nothing until it
@@ -38,7 +37,7 @@ def generate_launch_description():
         name="robot_controller",
         namespace="",
         output="screen",
-        parameters=[config],
+        parameters=[config, {"config_file": config}],
         emulate_tty=True,
     )
 
