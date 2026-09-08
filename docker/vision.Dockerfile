@@ -1,20 +1,17 @@
 # Vision container: webcam capture + age/gender/emotion inference (GPU).
-# Build context is the repo root, see docker-compose.yml.
-#
-# Model weights come from Git LFS - run `git lfs pull` before building, or the
-# size check below stops you. LFS pointers are ~130 bytes, not real weights.
+# Dependencies only - source and model weights are mounted by Compose.
 
-# "base" tag rather than "cudnn8-runtime": the torch wheels below ship their own
-# cuBLAS/cuDNN/etc., so a fuller CUDA image just duplicates ~3 GB of libraries.
-# The driver comes from the NVIDIA Container Toolkit at runtime anyway.
+# "base" rather than "cudnn8-runtime": the torch wheels ship their own cuBLAS
+# and cuDNN, so a fuller CUDA image duplicates ~3 GB.
 FROM nvidia/cuda:12.1.1-base-ubuntu22.04
 
 ENV DEBIAN_FRONTEND=noninteractive \
     ROS_DISTRO=humble \
     LANG=en_US.UTF-8 \
+    COLCON_DEFAULTS_FILE=/colcon-defaults.yaml \
     BASH_ENV=/ros-env.sh \
-    # ultralytics pip-installs missing deps on first model load, which is no use
-    # at an event with no network. Better to fail the build than discover it there.
+    # ultralytics pip-installs missing deps on first model load - no use at an
+    # event with no network, so fail the build instead.
     YOLO_AUTOINSTALL=false \
     # /root/.config isn't writable here and ultralytics would relocate anyway
     YOLO_CONFIG_DIR=/tmp/Ultralytics
@@ -49,39 +46,19 @@ RUN curl -sSL https://raw.githubusercontent.com/ros/rosdistro/master/ros.key \
     && rm -rf /var/lib/apt/lists/*
 
 # --- Python dependencies -------------------------------------------------
-# These two have to be upgraded together. apt ships packaging 21.3, too old for
-# the setuptools that torch/ultralytics pull in, and the mismatch later breaks
-# colcon's ament_python build with a canonicalize_version() TypeError.
+# Upgrade together: apt ships packaging 21.3, too old for the setuptools that
+# torch pulls in, and the mismatch breaks colcon with canonicalize_version().
 RUN pip3 install --no-cache-dir --upgrade pip setuptools packaging
 
 COPY docker/requirements-vision.txt /tmp/requirements-vision.txt
 RUN pip3 install --no-cache-dir -r /tmp/requirements-vision.txt
 
-# --- Workspace source -----------------------------------------------------
 WORKDIR /workspace
-COPY src/tvarometr_interfaces src/tvarometr_interfaces
-COPY src/tvarometr_inference src/tvarometr_inference
-
-# Weights are kept out of the source tree - see models/ in the repo root.
-COPY models /opt/tvarometr/models
-
-# Catch LFS pointer files before they end up baked into the image.
-RUN for f in /opt/tvarometr/models/*; do \
-        size=$(stat -c%s "$f" 2>/dev/null || echo 0); \
-        if [ "$size" -lt 1000000 ]; then \
-            echo "ERROR: $f is only ${size} bytes - looks like a Git LFS pointer, not the real weight file." >&2; \
-            echo "Run 'git lfs install && git lfs pull' in the repo before building this image." >&2; \
-            exit 1; \
-        fi; \
-    done
-
-RUN . /opt/ros/${ROS_DISTRO}/setup.sh \
-    && colcon build --symlink-install --packages-select tvarometr_interfaces tvarometr_inference
-
+COPY docker/colcon-defaults.yaml /colcon-defaults.yaml
 COPY docker/ros-env.sh /ros-env.sh
 COPY docker/entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh /ros-env.sh \
     && echo 'source /ros-env.sh' >> /root/.bashrc
 
 ENTRYPOINT ["/entrypoint.sh"]
-CMD ["ros2", "launch", "tvarometr_inference", "vision.launch.py"]
+CMD ["sleep", "infinity"]

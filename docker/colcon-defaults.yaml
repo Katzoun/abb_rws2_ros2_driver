@@ -1,0 +1,14 @@
+# Keep generated files inside the container, outside the /workspace bind mount.
+# Shared by the image build, development terminals and VS Code's postCreateCommand.
+"":
+  log-base: /opt/colcon_ws/log
+build:
+  base-paths: [/workspace/src]
+  build-base: /opt/colcon_ws/build
+  install-base: /opt/colcon_ws/install
+test:
+  base-paths: [/workspace/src]
+  build-base: /opt/colcon_ws/build
+  install-base: /opt/colcon_ws/install
+test-result:
+  test-result-base: /opt/colcon_ws/build

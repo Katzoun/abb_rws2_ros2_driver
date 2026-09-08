@@ -1,0 +1,42 @@
+// Robot controller development. A thin wrapper around the `control` service in
+// docker-compose.dev.yml, so the editor and the CLI land in the same container.
+{
+    "name": "robot_control",
+
+    "dockerComposeFile": [
+        "../../docker-compose.dev.yml"
+    ],
+    "service": "control",
+    "runServices": ["control"],
+    "workspaceFolder": "/workspace",
+
+    // Closing this window must not stop vision in another one.
+    "shutdownAction": "none",
+
+    // The image carries dependencies only, so build the packages once on create.
+    "postCreateCommand": "bash -c 'source /ros-env.sh && colcon build --symlink-install --packages-select robot_control_msgs robot_control'",
+
+    "customizations": {
+        "vscode": {
+            "extensions": [
+                "ms-python.python",
+                "ms-python.vscode-pylance",
+                "charliermarsh.ruff",
+                "ms-iot.vscode-ros"
+            ],
+            "settings": {
+                "python.defaultInterpreterPath": "/usr/bin/python3",
+                // So Pylance resolves rclpy and the generated messages.
+                "python.analysis.extraPaths": [
+                    "/opt/ros/humble/lib/python3.10/site-packages",
+                    "/opt/ros/humble/local/lib/python3.10/dist-packages",
+                    "/opt/colcon_ws/install/robot_control_msgs/lib/python3.10/site-packages",
+                    "/opt/colcon_ws/install/robot_control_msgs/local/lib/python3.10/dist-packages"
+                ],
+                "terminal.integrated.defaultProfile.linux": "bash"
+            }
+        }
+    },
+
+    "remoteUser": "root"
+}

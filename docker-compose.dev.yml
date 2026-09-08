@@ -1,25 +1,6 @@
-# Development stack: the robot driver on its own, no vision service.
-#
-# Complete in itself. There is no override file layered underneath any more -
-# pick the file you want and the whole configuration is in front of you:
-#
-#   docker compose up                                 the full system
-#   docker compose -f docker-compose.dev.yml up -d    just the driver
-#
-# Or open the repo in VS Code and run "Dev Containers: Reopen in Container".
-# That uses this same service, so the editor and the command line get the same
-# environment.
-#
-# The container idles rather than launching the node, so you start it yourself
-# and its output lands in your terminal, where Ctrl+C stops it:
-#
-#   docker compose -f docker-compose.dev.yml exec control bash
-#   colcon build --symlink-install --packages-select robot_control_msgs robot_control
-#   ros2 launch robot_control robot_control.launch.py
-#
-# In a second shell, drive it through the lifecycle:
-#   ros2 lifecycle set /robot_controller configure
-#   ros2 lifecycle set /robot_controller activate
+# Development stack. Two environments over one source tree: control (CPU) and
+# vision (GPU, behind a Compose profile). Both idle - you start nodes yourself.
+# See README.md for the workflow.
 
 services:
   control:
@@ -29,32 +10,60 @@ services:
     image: tvarometr/control:dev
     container_name: tvarometr_control_dev
     network_mode: host
-    # Shared IPC namespace as well: Fast DDS talks over shared memory to peers
-    # on the same host, and without this each container has its own /dev/shm,
-    # so they discover each other but no messages ever arrive.
+    # Fast DDS talks over shared memory; with a private /dev/shm the containers
+    # discover each other but no messages arrive.
     ipc: host
     stdin_open: true
     tty: true
     environment:
-      ROS_DOMAIN_ID: 42
+      ROS_DOMAIN_ID: ${ROS_DOMAIN_ID:-42}
       RMW_IMPLEMENTATION: rmw_fastrtps_cpp
-      # Without this python buffers its output when stdout is a pipe, and log
-      # lines sit in the buffer instead of appearing in the terminal.
+      # Otherwise python buffers its output when stdout is a pipe.
       PYTHONUNBUFFERED: "1"
-    # The repo itself. A bind mount is one set of files seen from two places,
-    # so an edit made in the container terminal and an edit made on the host
-    # are the same write - there is nothing to copy back out, and nothing is
-    # lost when the container is rebuilt. It also covers up the install/ tree
-    # baked into the image, which is why the colcon build above is needed once.
+    # One set of files seen from two places, so there is nothing to copy back
+    # out. Colcon writes outside it, to /opt/colcon_ws, and not to a volume.
     volumes:
       - .:/workspace
-      # Two directories that live in the container's own filesystem and would
-      # otherwise be thrown away with it on every rebuild. VS Code installs
-      # extensions into the container, not on the host, and the Claude Code
-      # extension carries a 217 MB binary; ~/.claude holds the login and the
-      # conversation history. Named volumes outlive the container, so both
-      # survive a rebuild.
+      # Editor extensions and assistant logins - expensive to reinstall, and
+      # otherwise thrown away with the container on every rebuild.
       - vscode-server:/root/.vscode-server
+      - claude-home:/root/.claude
+      - codex-home:/root/.codex
+    command: sleep infinity
+
+  vision:
+    # Keeps a plain `up -d` control-only. Naming the service enables the profile.
+    profiles: [vision]
+    build:
+      context: .
+      dockerfile: docker/vision.Dockerfile
+    image: tvarometr/vision:dev
+    container_name: tvarometr_vision_dev
+    network_mode: host
+    ipc: host
+    stdin_open: true
+    tty: true
+    environment:
+      ROS_DOMAIN_ID: ${ROS_DOMAIN_ID:-42}
+      RMW_IMPLEMENTATION: rmw_fastrtps_cpp
+      PYTHONUNBUFFERED: "1"
+      NVIDIA_VISIBLE_DEVICES: all
+      NVIDIA_DRIVER_CAPABILITIES: compute,utility
+    devices:
+      # Set CAMERA_DEVICE in .env for a real webcam. With the default, launch
+      # vision with use_camera:=false.
+      - ${CAMERA_DEVICE:-/dev/null}:/dev/video0
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    volumes:
+      - .:/workspace
+      - ./models:/opt/tvarometr/models:ro
+      - vision-vscode-server:/root/.vscode-server
       - claude-home:/root/.claude
       - codex-home:/root/.codex
     command: sleep infinity
@@ -63,3 +72,4 @@ volumes:
   vscode-server:
   claude-home:
   codex-home:
+  vision-vscode-server:
