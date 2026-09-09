@@ -1,13 +1,13 @@
-// Robot controller development. A thin wrapper around the `control` service in
+// Robot controller development. A thin wrapper around the `driver` service in
 // docker-compose.dev.yml, so the editor and the CLI land in the same container.
 {
-    "name": "robot_control",
+    "name": "abb_rws2_ros2_driver",
 
     "dockerComposeFile": [
         "../docker-compose.dev.yml"
     ],
-    "service": "control",
-    "runServices": ["control"],
+    "service": "driver",
+    "runServices": ["driver"],
     "workspaceFolder": "/workspace",
 
     // Closing the window leaves the container up, so CLI shells survive it.

@@ -2,7 +2,7 @@
 # start nodes yourself. See README.md for the workflow.
 
 services:
-  control:
+  driver:
     build:
       context: .
       dockerfile: docker/dev.Dockerfile

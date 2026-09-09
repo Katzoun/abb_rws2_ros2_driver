@@ -64,7 +64,7 @@ running.
 ### Command line
 
 ```bash
-docker compose -f docker-compose.dev.yml exec control bash
+docker compose -f docker-compose.dev.yml exec driver bash
 ```
 
 Every shell sources ROS through `docker/ros-env.sh`. Build once after the
