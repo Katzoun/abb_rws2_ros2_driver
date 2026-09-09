@@ -5,9 +5,6 @@ controller as a managed node: two actions stream a path into the RAPID buffer
 queue, one service reaches the rest of RWS, and joint states are published while
 the node is active.
 
-Extracted from [tvarometr_ws](https://github.com/Katzoun/tvarometr_ws), where it
-drives an ABB GoFa that draws faces. Nothing in it is specific to that system.
-
 > Under active rebuild. Development containers are the only supported mode right
 > now - there is no production image.
 

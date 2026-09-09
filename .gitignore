@@ -8,3 +8,4 @@ __pycache__/
 .claude/
 docker-compose.override.yml
 ruff.toml
+CLAUDE.md
