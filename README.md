@@ -264,8 +264,6 @@ abb_rws2_ros2_driver/
 └── docker-compose.prod.yml        # the deployed container, source baked in
 ```
 
-## Institution
+## License
 
-Developed at Brno University of Technology (BUT)  
-Faculty of Mechanical Engineering (FME)  
-Brno, Czech Republic
+MIT - see [LICENSE](LICENSE).
