@@ -17,7 +17,6 @@ effect without restarting the process:
     ros2 lifecycle set /robot_controller activate
 """
 
-import inspect
 import json
 import threading
 import time
@@ -39,10 +38,11 @@ from rclpy.parameter import Parameter
 from rclpy.timer import Timer
 from sensor_msgs.msg import JointState
 
+from robot_control.commands import COMMANDS, HELP_COMMAND, parse_params, render_help
 from robot_control.constants import RobotControllerConstants as RCC
 from robot_control.conversions import joints_to_dipc_jointtarget, pose_to_dipc_robtarget
 from robot_control.rws.interface import RWSInterface
-from robot_control.rws.provider import NO_STATUS
+from robot_control.rws.provider import NO_STATUS, RWSResult
 from robot_control_msgs.action import ExecuteJointArray, ExecutePoseArray
 from robot_control_msgs.msg import RobotJoints
 from robot_control_msgs.srv import RobotRequestSrv
@@ -530,8 +530,8 @@ class RobotControllerNode(LifecycleNode):
     def _claim(self) -> bool:
         """Take the robot for one goal. False means another goal already has it.
 
-        Covers only the sending phase; the motion is guarded by the is_rapid_idle
-        check in the goal callbacks - RAPID holds CURRENT_STATE non-zero until done.
+        Held until the execute callback returns, so it covers the motion as well -
+        which is what lets the request service refuse commands mid-trajectory.
         """
         with self._busy_lock:
             if self._busy:
@@ -1259,10 +1259,8 @@ class RobotControllerNode(LifecycleNode):
     def controller_request_cb(
         self, request: RobotRequestSrv.Request, response: RobotRequestSrv.Response
     ):
-        """Handle GET request service call"""
-        params: list[str] = [param for param in request.params]
-        # filter out falsy params
-        params = [p for p in params if p]
+        """Call one command from the table and report what it answered."""
+        params = list(request.params)
         cmd: str = request.command
 
         self.logger.info(
@@ -1272,12 +1270,7 @@ class RobotControllerNode(LifecycleNode):
         try:
             result = self.robot_request(cmd, params)
             response.message, response.status_code = result
-            # An RWSResult knows whether the operation worked; a plain tuple
-            # carries nothing but the HTTP status of its last request.
-            outcome = getattr(result, "ok", None)
-            response.status = (
-                outcome if outcome is not None else 200 <= response.status_code < 300
-            )
+            response.status = result.ok
 
         except Exception as e:
             error_msg = f"Error handling controller_request '{cmd}': {e}"
@@ -1292,53 +1285,30 @@ class RobotControllerNode(LifecycleNode):
 
         return response
 
-    def robot_request(self, cmd: str, params: list):
+    def robot_request(self, cmd: str, params: list[str]) -> RWSResult:
+        """Look the command up in the table, check it is allowed, then call it."""
+        if cmd == HELP_COMMAND:
+            return RWSResult(render_help(), 200)
 
-        if self._logged_in and self.RWS is not None:
-            if not hasattr(self.RWS, cmd):
-                raise ValueError(f"Method {cmd} not found")
-
-            method = getattr(self.RWS, cmd)
-            signature = inspect.signature(method)
-            # Filter out 'self' parameter
-            method_params = [
-                p for name, p in signature.parameters.items() if name != "self"
-            ]
-            num_total_params = len(method_params)
-            # Get number of required parameters
-            num_required_params = sum(
-                1 for p in method_params if p.default == inspect.Parameter.empty
+        command = COMMANDS.get(cmd)
+        if command is None:
+            raise ValueError(
+                f"Unknown command '{cmd}'. Call '{HELP_COMMAND}' for the list."
             )
 
-            try:
-                if num_required_params == 0 and len(params) == 0:
-                    # No parameters expected
-                    return method()
-                elif num_required_params == len(params):
-                    # Exact match
-                    return method(*params)
-                elif (
-                    len(params) <= num_total_params
-                    and len(params) >= num_required_params
-                ):
-                    # Some optional parameters can be omitted
-                    return method(*params)
-
-                elif len(params) < num_required_params:
-                    # Fewer parameters provided than required
-                    raise ValueError(
-                        f"Not enough parameters provided: got {len(params)}, need at least {num_required_params}"
-                    )
-                else:
-                    # Too many parameters, use only what's needed
-                    return method(*params[:num_total_params])
-
-            except TypeError as e:
-                raise ValueError(f"Parameter mismatch calling {cmd}: {e}")
-        else:
+        if not self._logged_in or self.RWS is None:
             raise RuntimeError(
                 "Node not initialized or not logged in to robot, reinitialize the node."
             )
+
+        # Advisory only: a goal can start right after this read, and holding the
+        # lock across an HTTP call would stall the action server.
+        with self._busy_lock:
+            busy = self._busy
+        if busy and not command.while_moving:
+            raise RuntimeError(f"'{cmd}' is refused while a trajectory is running")
+
+        return getattr(self.RWS, cmd)(**parse_params(cmd, command, params))
 
 
 def main(args=None):

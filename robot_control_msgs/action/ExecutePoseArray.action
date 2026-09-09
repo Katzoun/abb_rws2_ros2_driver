@@ -1,12 +1,24 @@
 # Streams a cartesian path to the robot over the DIPC queue, one robtarget at a
-# time. motion_command picks the RAPID routine (MoveL/MoveJ), speed is passed
-# through as the RAPID speed value.
+# time. The goal ends when the robot has arrived, not when the last point has
+# been queued.
+#
+# Cancelling does not stop the robot: the point being sent is promoted to the
+# last one, the queue runs to its end, and the goal reports CANCELED once the
+# robot stands still.
+
+# MoveL or MoveJ - which RAPID routine draws the path.
 string motion_command
+# TCP speed in mm/s, as text. RAPID clamps it to 5-1000.
 string speed
+# Poses in metres, the ROS convention, converted to the millimetres a robtarget
+# holds. Orientation is a ROS quaternion (x,y,z,w) and becomes ABB's (w,x,y,z);
+# the arm configuration is left to the controller.
 geometry_msgs/PoseArray path
 ---
 bool success
 string message
+# Points RAPID reported as done. After an abort this can be a point or two
+# ahead of where the robot physically stopped: the planner runs ahead.
 int32 executed_count
 ---
 int32 current_index

@@ -1,10 +1,21 @@
-# Same as ExecutePoseArray but in joint space (MoveAbsJ/MoveAbsL).
+# Same as ExecutePoseArray but in joint space (MoveAbsJ/MoveAbsL). The goal ends
+# when the robot has arrived, not when the last point has been queued.
+#
+# Cancelling does not stop the robot: the point being sent is promoted to the
+# last one, the queue runs to its end, and the goal reports CANCELED once the
+# robot stands still.
+
+# MoveAbsJ or MoveAbsL - which RAPID routine drives the axes.
 string motion_command
+# TCP speed in mm/s, as text. RAPID clamps it to 5-1000.
 string speed
+# Axis angles in radians, six per waypoint.
 robot_control_msgs/RobotJoints[] waypoints
 ---
 bool success
 string message
+# Points RAPID reported as done. After an abort this can be a point or two
+# ahead of where the robot physically stopped: the planner runs ahead.
 int32 executed_count
 ---
 int32 current_index

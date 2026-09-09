@@ -7,6 +7,7 @@ ROS environment underneath it.
 """
 
 from collections.abc import Sequence
+from math import degrees
 
 from geometry_msgs.msg import Pose
 
@@ -50,9 +51,10 @@ def pose_to_dipc_robtarget(pose: Pose) -> str:
 
 
 def joints_to_dipc_jointtarget(joints: Sequence[float]) -> str:
-    """Six joint angles in degrees as a jointtarget for the DIPC queue.
+    """Six joint angles in radians as a jointtarget for the DIPC queue.
 
-    Format: jointtarget;[[j1..j6],[external axes]]
+    ROS speaks radians and a RAPID jointtarget degrees - the same split as
+    metres and millimetres above. Format: jointtarget;[[j1..j6],[ext axes]]
     """
-    robax = ",".join(f"{joint:.4f}" for joint in joints[:6])
+    robax = ",".join(f"{degrees(joint):.4f}" for joint in joints[:6])
     return f"jointtarget;[[{robax}],[{_EXTAX}]]"

@@ -10,6 +10,17 @@ from typing import Any
 from robot_control.constants import RobotControllerConstants
 from robot_control.rws.provider import NO_STATUS, RWSClient, RWSResult, SupportsLogging
 
+# These wait for points streamed over DIPC, so only a motion action may start
+# them - on their own they never return.
+_BUFFER_ROUTINES = frozenset(
+    {
+        RobotControllerConstants.Routines.MOVE_L,
+        RobotControllerConstants.Routines.MOVE_J,
+        RobotControllerConstants.Routines.MOVE_ABS_J,
+        RobotControllerConstants.Routines.MOVE_ABS_L,
+    }
+)
+
 
 class RWSInterface(RWSClient):
     """High-level interface for ABB Robot Web Services (RWS).
@@ -79,19 +90,19 @@ class RWSInterface(RWSClient):
         return self.get_generic("/ctrl/safety/mode", "safetymode")
 
     # These three return the parsed body, not an RWSResult like the rest.
-    def get_rapid_retcode(self, retcode_name: str) -> tuple[Any | None, int]:
-        """Returns (RAPID return code value, http_status_code)."""
+    def get_rapid_retcode(self, retcode_name: str) -> RWSResult:
+        """What an ABB error number means, as a JSON string."""
         if not retcode_name:
             raise ValueError("Return code name cannot be empty")
-        return self.get_request(f"/rw/retcode/?code={retcode_name}")
+        return self.get_generic_json(f"/rw/retcode/?code={retcode_name}")
 
-    def get_user_uas(self) -> tuple[Any | None, int]:
-        """Returns (the user-defined UAS variables, http_status_code)."""
-        return self.get_request("/uas/user/grants")
+    def get_user_uas(self) -> RWSResult:
+        """Grants held by the logged-in user, as a JSON string."""
+        return self.get_generic_json("/uas/user/grants")
 
-    def get_all_grants(self) -> tuple[Any | None, int]:
-        """Returns (the user-defined UAS variables, http_status_code)."""
-        return self.get_request("/uas/grants")
+    def get_all_grants(self) -> RWSResult:
+        """Every grant the controller knows, as a JSON string."""
+        return self.get_generic_json("/uas/grants")
 
     def get_speedratio(self) -> RWSResult:
         """Returns (The current speed ratio of the robot, http_status_code)."""
@@ -713,6 +724,11 @@ class RWSInterface(RWSClient):
 
     def run_rapid_routine(self, routine_name: str) -> RWSResult:
         """Run a RAPID routine on the robot."""
+        if routine_name in _BUFFER_ROUTINES:
+            return RWSResult.error(
+                f"ERR - {routine_name} only runs as part of a motion action", NO_STATUS
+            )
+
         if self.is_rapid_idle():
             writes = [
                 (

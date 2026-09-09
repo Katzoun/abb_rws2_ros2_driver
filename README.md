@@ -31,7 +31,9 @@ Image acquisition and neural network inference.
 
 - **Nodes:** `usb_cam` (from the `usb_cam` package) streams the webcam,
   configured in `config/usb_cam.yaml`; `inference_node_exec` keeps the newest
-  frame and runs the models when triggered.
+  frame and runs the models when triggered; `drawing_node_exec` turns a face
+  analysis into the path to draw, over the `drawing_node/generate_drawing`
+  action - a managed node, and the launch file does not start it.
 - **Topics:** `/image_raw` (sensor_msgs/Image) camera stream,
   `/start_inference` (std_msgs/String) trigger,
   `/face_attributes` (std_msgs/String) JSON with age, gender and emotion.
@@ -43,8 +45,9 @@ The ABB robot driver, a managed node speaking Robot Web Services.
   states.
 - **Interfaces:** `robot_robtarget_move` / `robot_jointtarget_move` (actions)
   stream a path into the RAPID buffer queue over DIPC; `controller_request`
-  (service) calls an RWS method by name; `joint_states`
-  (sensor_msgs/JointState) reports the robot pose while active.
+  (service) calls one of the RWS methods listed in `commands.py`, which the
+  `help` command names; `joint_states` (sensor_msgs/JointState) reports the
+  robot pose while active.
 
 #### `master_pkg` (reference only)
 The pre-rebuild system: state machine, its own RWS client, path generation and
@@ -156,6 +159,26 @@ ros2 lifecycle set /robot_controller configure
 ros2 lifecycle set /robot_controller activate
 ```
 
+Everything else on the controller goes through one service, which lists itself:
+
+```bash
+ros2 service call /robot_controller/controller_request \
+    robot_control_msgs/srv/RobotRequestSrv "{command: 'help'}" | sed 's/\\n/\n/g'
+```
+
+The `sed` is there only because `ros2 service call` prints the response on a
+single line. `help` answers before `configure` as well - it never touches the
+robot. Parameters go in as `name=value`, in any order:
+
+```bash
+ros2 service call /robot_controller/controller_request \
+    robot_control_msgs/srv/RobotRequestSrv \
+    "{command: 'get_rapid_symbol', params: ['symbol_name=current_state', 'module_name=TRobMain']}"
+```
+
+Only what `src/robot_control/robot_control/commands.py` lists can be called, and
+a command that changes something is refused while a trajectory is running.
+
 **There is no orchestrator yet.** Until the BehaviorTree one exists, send goals
 by hand:
 
@@ -201,6 +224,9 @@ files. When a shared interface changes, rebuild every consumer: vision owns
 
 Both containers use host networking, shared IPC and the same `ROS_DOMAIN_ID`, so
 nodes in either one discover each other.
+
+`colcon test --packages-select robot_control` checks that the command table
+still matches the methods it names. It needs neither a robot nor a rebuild.
 
 ### Where the files are
 
@@ -279,8 +305,10 @@ tvarometr_ws/
 │   ├── robot_control/             # ABB robot driver, managed node (RWS)
 │   │   ├── launch/robot_control.launch.py
 │   │   ├── config/robot_control.yaml  # address, credentials, rates
+│   │   ├── test/                  # command table vs. the code it names
 │   │   └── robot_control/
 │   │       ├── robot_controller_node.py
+│   │       ├── commands.py        # what the request service may call
 │   │       ├── conversions.py     # ROS messages <-> RAPID literals
 │   │       ├── constants.py       # names shared with the RAPID program
 │   │       └── rws/               # HTTP client, RWS calls

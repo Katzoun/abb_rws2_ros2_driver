@@ -1,6 +1,10 @@
 # Calls a method on the RWS interface by name. Keeps the ROS side free of a
 # bespoke service per robot operation - make_robot_ready, run_rapid_routine,
-# run_move_command, set_speedratio and the rest all come through here.
+# set_speedratio and the rest all come through here.
+#
+# Only what robot_control/commands.py lists can be called, and params are
+# name=value in any order: ['signal_name=DO_1', 'signal_value=1'].
+# The command 'help' answers with the whole list.
 string command
 string[] params
 ---
