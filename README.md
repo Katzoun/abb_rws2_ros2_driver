@@ -1,4 +1,4 @@
-# ABB RWS driver
+# ABB RWS driver for ROS 2
 
 A ROS 2 driver for ABB robots over Robot Web Services 2.0. It exposes an ABB
 controller as a managed node: two actions stream a path into the RAPID buffer
@@ -11,7 +11,7 @@ drives an ABB GoFa that draws faces. Nothing in it is specific to that system.
 > Under active rebuild. Development containers are the only supported mode right
 > now - there is no production image.
 
-**Česky: [rychlý start pro vývoj](VYVOJ.md).**
+See the [development quick start](DEVELOPMENT.md) for the short version.
 
 ## Architecture
 
@@ -54,8 +54,8 @@ is needed on the host.
 ### First run
 
 ```bash
-git clone https://github.com/Katzoun/abb_rws_driver.git
-cd abb_rws_driver
+git clone https://github.com/Katzoun/abb_rws2_ros2_driver.git
+cd abb_rws2_ros2_driver
 docker compose -f docker-compose.dev.yml up -d --build
 ```
 
@@ -144,9 +144,9 @@ cloned inside a workspace's `src/`. The ROS-native way is a `.repos` file:
 
 ```yaml
 repositories:
-  abb_rws_driver:
+  abb_rws2_ros2_driver:
     type: git
-    url: https://github.com/Katzoun/abb_rws_driver.git
+    url: https://github.com/Katzoun/abb_rws2_ros2_driver.git
     version: main
 ```
 
@@ -155,7 +155,7 @@ vcs import src < driver.repos
 colcon build --packages-select robot_control_msgs   # a consumer that only talks to the driver
 ```
 
-Add `src/abb_rws_driver/` to the consuming workspace's `.gitignore`.
+Add `src/abb_rws2_ros2_driver/` to the consuming workspace's `.gitignore`.
 
 ## Working on the code
 
@@ -230,7 +230,7 @@ Optional `.env` in the repo root, read by Compose:
 ## Project structure
 
 ```
-abb_rws_driver/
+abb_rws2_ros2_driver/
 ├── robot_control_msgs/            # msg/srv/action definitions
 ├── robot_control/                 # the driver, a managed node (RWS)
 │   ├── launch/robot_control.launch.py

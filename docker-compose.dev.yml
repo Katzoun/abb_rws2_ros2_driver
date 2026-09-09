@@ -6,8 +6,8 @@ services:
     build:
       context: .
       dockerfile: docker/control.Dockerfile
-    image: abb_rws_driver/control:dev
-    container_name: abb_rws_driver_control_dev
+    image: abb_rws2_ros2_driver:dev
+    container_name: abb_rws2_ros2_driver_dev
     network_mode: host
     # Fast DDS talks over shared memory; with a private /dev/shm other nodes
     # discover this one but no messages arrive.
