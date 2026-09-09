@@ -1,0 +1,57 @@
+# Ruff for this workspace.
+#
+# Two separate tools share one config:
+#   ruff format .   rewrites layout, like black
+#   ruff check .    finds problems; --fix repairs the ones it can
+#
+# The VS Code extension is wired up in .vscode/settings.json to run both on
+# save, so day to day there is nothing to type.
+
+# Applies to code only - the formatter never reflows a comment or a docstring.
+# Prose is limited separately by W505 below.
+line-length = 88
+
+# ROS 2 Humble ships Python 3.10. Without this, pyupgrade-style rules would
+# suggest syntax the container cannot run.
+target-version = "py310"
+
+[lint]
+# On top of the defaults:
+#   I     import sorting, worth having once a package spans several modules
+#   W505  comments and docstrings over max-doc-length below
+#
+# E501 is deliberately not here. It would flag long code lines too, and most
+# of those are log messages and other string literals the formatter cannot
+# break up - the findings that matter would drown in them.
+extend-select = ["I", "W505"]
+
+ignore = [
+    # Every boundary in the driver deliberately catches Exception and turns it
+    # into a failed transition, a rejected goal or an error response - losing
+    # the robot session must never take the node down with it. Flagging all ~17
+    # of those buries the findings that matter.
+    "BLE001",
+]
+
+[lint.pycodestyle]
+# The limit W505 holds comments and docstrings to. Same as line-length, so
+# prose and code line up in the editor. Nothing rewraps these automatically -
+# ruff points at them and you reflow them by hand.
+max-doc-length = 88
+
+[lint.isort]
+# Has to agree with format.skip-magic-trailing-comma below, or ruff warns that
+# the two disagree about what a trailing comma means.
+split-on-trailing-comma = false
+
+
+[format]
+# A trailing comma left behind by an earlier, narrower line-length would
+# otherwise pin that call open forever: black and ruff both read it as "keep
+# this exploded". With it skipped, everything that fits on one line goes back
+# onto one line, and changing line-length actually reflows the code.
+#
+# The cost is that a trailing comma no longer forces a vertical layout. To keep
+# something split on purpose, put a comment in it or break it into named
+# variables instead.
+skip-magic-trailing-comma = true

@@ -6,7 +6,5 @@ log/
 __pycache__/
 *.pyc
 .claude/
-docker-compose.override.yml
-ruff.toml
 CLAUDE.md
 
