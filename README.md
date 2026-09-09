@@ -1,11 +1,11 @@
 # ABB RWS driver for ROS 2
 
 A ROS 2 driver for ABB robots over Robot Web Services 2.0. It exposes an ABB
-controller as a managed node: two actions stream a path into the RAPID buffer
+controller as a managed node - two actions stream a path into the RAPID buffer
 queue, one service reaches the rest of RWS, and joint states are published while
 the node is active.
 
-> Under active rebuild. Two ways to run it: a development container with the
+> Under active rebuild. Two ways to run it - a development container with the
 > source mounted, and a production image that carries the build and starts the
 > driver by itself.
 
