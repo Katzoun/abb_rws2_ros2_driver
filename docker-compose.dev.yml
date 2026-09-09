@@ -1,17 +1,16 @@
-# Development stack. Two environments over one source tree: control (CPU) and
-# vision (GPU, behind a Compose profile). Both idle - you start nodes yourself.
-# See README.md for the workflow.
+# Development stack: one CPU container with the ABB RWS driver. It idles - you
+# start nodes yourself. See README.md for the workflow.
 
 services:
   control:
     build:
       context: .
       dockerfile: docker/control.Dockerfile
-    image: tvarometr/control:dev
-    container_name: tvarometr_control_dev
+    image: abb_rws_driver/control:dev
+    container_name: abb_rws_driver_control_dev
     network_mode: host
-    # Fast DDS talks over shared memory; with a private /dev/shm the containers
-    # discover each other but no messages arrive.
+    # Fast DDS talks over shared memory; with a private /dev/shm other nodes
+    # discover this one but no messages arrive.
     ipc: host
     stdin_open: true
     tty: true
@@ -31,45 +30,7 @@ services:
       - codex-home:/root/.codex
     command: sleep infinity
 
-  vision:
-    # Keeps a plain `up -d` control-only. Naming the service enables the profile.
-    profiles: [vision]
-    build:
-      context: .
-      dockerfile: docker/vision.Dockerfile
-    image: tvarometr/vision:dev
-    container_name: tvarometr_vision_dev
-    network_mode: host
-    ipc: host
-    stdin_open: true
-    tty: true
-    environment:
-      ROS_DOMAIN_ID: ${ROS_DOMAIN_ID:-42}
-      RMW_IMPLEMENTATION: rmw_fastrtps_cpp
-      PYTHONUNBUFFERED: "1"
-      NVIDIA_VISIBLE_DEVICES: all
-      NVIDIA_DRIVER_CAPABILITIES: compute,utility
-    devices:
-      # Set CAMERA_DEVICE in .env for a real webcam. With the default, launch
-      # vision with use_camera:=false.
-      - ${CAMERA_DEVICE:-/dev/null}:/dev/video0
-    deploy:
-      resources:
-        reservations:
-          devices:
-            - driver: nvidia
-              count: all
-              capabilities: [gpu]
-    volumes:
-      - .:/workspace
-      - ./models:/opt/tvarometr/models:ro
-      - vision-vscode-server:/root/.vscode-server
-      - claude-home:/root/.claude
-      - codex-home:/root/.codex
-    command: sleep infinity
-
 volumes:
   vscode-server:
   claude-home:
   codex-home:
-  vision-vscode-server:

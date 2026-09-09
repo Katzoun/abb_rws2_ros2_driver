@@ -4,13 +4,13 @@
     "name": "robot_control",
 
     "dockerComposeFile": [
-        "../../docker-compose.dev.yml"
+        "../docker-compose.dev.yml"
     ],
     "service": "control",
     "runServices": ["control"],
     "workspaceFolder": "/workspace",
 
-    // Closing this window must not stop vision in another one.
+    // Closing the window leaves the container up, so CLI shells survive it.
     "shutdownAction": "none",
 
     // The image carries dependencies only, so build the packages once on create.

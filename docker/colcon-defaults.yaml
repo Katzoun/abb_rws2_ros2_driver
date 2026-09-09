@@ -3,11 +3,11 @@
 "":
   log-base: /opt/colcon_ws/log
 build:
-  base-paths: [/workspace/src]
+  base-paths: [/workspace]
   build-base: /opt/colcon_ws/build
   install-base: /opt/colcon_ws/install
 test:
-  base-paths: [/workspace/src]
+  base-paths: [/workspace]
   build-base: /opt/colcon_ws/build
   install-base: /opt/colcon_ws/install
 test-result:
