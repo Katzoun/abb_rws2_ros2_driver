@@ -1,2 +1,0 @@
-# Python dependencies for the CPU control container (the RWS robot driver).
-requests

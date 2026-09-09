@@ -1,0 +1,19 @@
+# Production stack: no mounts, no volumes - the image carries the build.
+
+services:
+  driver:
+    build:
+      context: .
+      dockerfile: docker/prod.Dockerfile
+    image: abb_rws2_ros2_driver:prod
+    container_name: abb_rws2_ros2_driver
+    network_mode: host
+    # Fast DDS talks over shared memory; with a private /dev/shm other nodes
+    # discover this one but no messages arrive.
+    ipc: host
+    restart: unless-stopped
+    environment:
+      ROS_DOMAIN_ID: ${ROS_DOMAIN_ID:-42}
+      RMW_IMPLEMENTATION: rmw_fastrtps_cpp
+      # Otherwise python buffers its output when stdout is a pipe.
+      PYTHONUNBUFFERED: "1"

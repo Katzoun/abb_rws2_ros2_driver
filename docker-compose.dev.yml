@@ -5,7 +5,7 @@ services:
   control:
     build:
       context: .
-      dockerfile: docker/control.Dockerfile
+      dockerfile: docker/dev.Dockerfile
     image: abb_rws2_ros2_driver:dev
     container_name: abb_rws2_ros2_driver_dev
     network_mode: host

@@ -15,8 +15,6 @@ robot_controller:
   ros__parameters:
 
     connection:
-      # Controllers seen in the lab: 192.168.0.31, 192.168.0.37, 192.168.0.14,
-      # 192.168.1.157
       ip_address: 192.168.50.10
       # 80 on the virtual controller, 443 on the physical one
       port: 80

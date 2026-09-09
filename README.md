@@ -5,10 +5,9 @@ controller as a managed node: two actions stream a path into the RAPID buffer
 queue, one service reaches the rest of RWS, and joint states are published while
 the node is active.
 
-> Under active rebuild. Development containers are the only supported mode right
-> now - there is no production image.
-
-See the [development quick start](DEVELOPMENT.md) for the short version.
+> Under active rebuild. Two ways to run it: a development container with the
+> source mounted, and a production image that carries the build and starts the
+> driver by itself.
 
 ## Architecture
 
@@ -27,14 +26,8 @@ The driver itself, a managed (lifecycle) node speaking RWS.
 ### `robot_control_msgs`
 
 The driver's interface definitions: `ExecutePoseArray` and `ExecuteJointArray`
-actions, the `RobotRequestSrv` service and the `RobotJoints` message. They live
-here rather than in a repo of their own because they version with the driver;
-a consumer that only needs to talk to the driver builds this package alone.
-
-### Python libraries
-
-Pinned in `docker/requirements-control.txt`. The driver needs `requests` and
-what ROS 2 Humble already brings.
+actions, the `RobotRequestSrv` service and the `RobotJoints` message. A consumer
+that only needs to talk to the driver builds this package alone.
 
 ## Getting started
 
@@ -48,7 +41,7 @@ what ROS 2 Humble already brings.
 ROS 2 Humble and every Python dependency live in the container, so nothing else
 is needed on the host.
 
-### First run
+### Development container
 
 ```bash
 git clone https://github.com/Katzoun/abb_rws2_ros2_driver.git
@@ -57,11 +50,9 @@ docker compose -f docker-compose.dev.yml up -d --build
 ```
 
 Put the robot's address and credentials in `robot_control/config/robot_control.yaml`
-before the first run.
-
-The container bind-mounts the repo at `/workspace` and then idles - it never
-launches a node by itself, so you start one from a terminal and stop it with
-Ctrl+C.
+first. The container bind-mounts the repo at `/workspace` and then idles - you
+start a node yourself and stop it with Ctrl+C. For the deployed container see
+[Production](#production).
 
 ### VS Code
 
@@ -84,22 +75,17 @@ colcon build --symlink-install --packages-select robot_control_msgs robot_contro
 source /opt/colcon_ws/install/setup.bash
 ```
 
-Stop the container from the host:
-
-```bash
-docker compose -f docker-compose.dev.yml stop
-```
+Stop the container from the host with
+`docker compose -f docker-compose.dev.yml stop`.
 
 ## Running the driver
-
-In a container terminal:
 
 ```bash
 ros2 launch robot_control robot_control.launch.py
 ```
 
-The driver is a managed node and comes up `unconfigured`, doing nothing until it
-is driven through the lifecycle from a second terminal:
+The driver comes up `unconfigured` and does nothing until it is driven through
+the lifecycle from a second terminal:
 
 ```bash
 ros2 lifecycle set /robot_controller configure
@@ -113,9 +99,9 @@ ros2 service call /robot_controller/controller_request \
     robot_control_msgs/srv/RobotRequestSrv "{command: 'help'}" | sed 's/\\n/\n/g'
 ```
 
-The `sed` is there only because `ros2 service call` prints the response on a
-single line. `help` answers before `configure` as well - it never touches the
-robot. Parameters go in as `name=value`, in any order:
+The `sed` is only because `ros2 service call` prints the response on a single
+line. `help` answers before `configure` as well. Parameters go in as
+`name=value`, in any order:
 
 ```bash
 ros2 service call /robot_controller/controller_request \
@@ -134,10 +120,47 @@ ros2 action send_goal /robot_controller/robot_robtarget_move \
     "{motion_command: MoveL, speed: '100', path: {poses: [...]}}"
 ```
 
+## Production
+
+```bash
+docker compose -f docker-compose.prod.yml up -d --build
+docker compose -f docker-compose.prod.yml logs -f
+```
+
+| | Development | Production |
+| --- | --- | --- |
+| Source | bind-mounted from the host | copied in at build time |
+| Build | `colcon build` by hand | baked into the image |
+| Command | `sleep infinity`, you launch the node | `ros2 launch`, the node starts with the container |
+| Volumes | editor and assistant state | none |
+| Restart | none | `unless-stopped` |
+
+Nothing is mounted, so what runs is what was built. The node still comes up
+`unconfigured` - an orchestrator drives it through `configure` and `activate`,
+where a wrong address or a robot that is switched off shows up as a failed
+transition rather than a crashed container.
+
+The address and credentials are baked in from
+`robot_control/config/robot_control.yaml` as it stood at build time. `nano` is
+installed so a deployed container can be edited in place; `exec` allocates its
+own terminal, so the service needs neither `stdin_open` nor `tty`:
+
+```bash
+docker compose -f docker-compose.prod.yml exec driver \
+    nano /opt/colcon_ws/install/share/robot_control/config/robot_control.yaml
+```
+
+Follow it with a lifecycle `cleanup` and `configure` to reload. The edit
+survives `restart` but not `down` or `up --build`, which recreate the container
+from the image.
+
+The two compose files can run side by side, but only one of them should hold
+the `/robot_controller` name in a given `ROS_DOMAIN_ID`.
+
 ## Using it from another workspace
 
 The packages sit at the repo root, so colcon finds them wherever the repo is
-cloned inside a workspace's `src/`. The ROS-native way is a `.repos` file:
+cloned inside a workspace's `src/`:
 
 ```yaml
 repositories:
@@ -164,9 +187,14 @@ files.
 `colcon test --packages-select robot_control` runs the test suite, which needs
 neither a robot nor a rebuild.
 
-### Where the files are
+A colcon build is not a Docker build: after a change to a `package.xml` or a
+Dockerfile, use **Dev Containers: Rebuild Container**, or
+`docker compose -f docker-compose.dev.yml up -d --build` on the host.
 
-Colcon writes outside the bind mount, so build output never lands on the host:
+Dependencies are declared in the two `package.xml` files and installed by
+`rosdep` at image build time, so adding one there is enough.
+
+### Where the files are
 
 ```text
 /workspace/              source, shared with the host
@@ -175,27 +203,18 @@ Colcon writes outside the bind mount, so build output never lands on the host:
 /opt/colcon_ws/log/      inside the container
 ```
 
-The paths come from `docker/colcon-defaults.yaml`. They are not in a volume:
-build output survives stopping and starting the container and is discarded when
-the container is rebuilt, so every rebuild starts from a clean install. Named
-volumes cover only editor extensions and assistant settings, which are
-expensive to reinstall.
-
-### Rebuilding the image
-
-After a change to the requirements file or the Dockerfile, use **Dev Containers:
-Rebuild Container**, or on the host:
-
-```bash
-docker compose -f docker-compose.dev.yml up -d --build
-```
+The paths come from `docker/colcon-defaults.yaml`. Build output is not in a
+volume: it survives stopping and starting the container, and a rebuild starts
+from a clean install.
 
 ### Which file does what
 
 | File | Role |
 | --- | --- |
-| `docker/control.Dockerfile` | Dependencies. No source or prebuilt workspace. |
-| `docker-compose.dev.yml` | How the container runs: mounts, network. |
+| `docker/dev.Dockerfile` | Development dependencies. No source or prebuilt workspace. |
+| `docker/prod.Dockerfile` | Production image: dependencies, the source and the build. |
+| `docker-compose.dev.yml` | How the development container runs: mounts, network. |
+| `docker-compose.prod.yml` | How the deployed container runs: no mounts, restarts, launches the node. |
 | `.devcontainer/` | Which service VS Code attaches to, its extensions, and the build on create. |
 | `docker/colcon-defaults.yaml` | Colcon output paths. |
 | `docker/ros-env.sh` | Sources ROS and the built workspace in every shell. |
@@ -214,7 +233,7 @@ physical one on 443.
 The file is re-read on every `configure`, so the driver can be pointed at a
 different controller without restarting the process: `cleanup`, edit the YAML,
 `configure` again. That reload also overwrites anything set with
-`ros2 param set` since the last `configure`.
+`ros2 param set`.
 
 ### Environment
 
@@ -239,9 +258,10 @@ abb_rws2_ros2_driver/
 │       ├── conversions.py         # ROS messages <-> RAPID literals
 │       ├── constants.py           # names shared with the RAPID program
 │       └── rws/                   # HTTP client, RWS calls
-├── docker/                        # Dockerfile, pinned requirements, entrypoint
+├── docker/                        # Dockerfiles, entrypoint, colcon defaults
 ├── .devcontainer/                 # VS Code config
-└── docker-compose.dev.yml         # the dev container, source mounted
+├── docker-compose.dev.yml         # the dev container, source mounted
+└── docker-compose.prod.yml        # the deployed container, source baked in
 ```
 
 ## Institution

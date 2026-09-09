@@ -1,6 +1,3 @@
-# Control container: the ABB robot driver (RWS). CPU only.
-# Dependencies only - source is mounted by Compose and built with colcon inside.
-
 FROM ros:humble-ros-base
 
 ENV DEBIAN_FRONTEND=noninteractive \
@@ -13,8 +10,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         python3-pip \
     && rm -rf /var/lib/apt/lists/*
 
-COPY docker/requirements-control.txt /tmp/requirements-control.txt
-RUN pip3 install --no-cache-dir -r /tmp/requirements-control.txt
+# Manifests only: the source itself is mounted at run time.
+COPY robot_control/package.xml /tmp/deps/robot_control/package.xml
+COPY robot_control_msgs/package.xml /tmp/deps/robot_control_msgs/package.xml
+RUN apt-get update \
+    && rosdep update --rosdistro ${ROS_DISTRO} \
+    && rosdep install --from-paths /tmp/deps --ignore-src --rosdistro ${ROS_DISTRO} -y \
+    && rm -rf /tmp/deps /var/lib/apt/lists/*
 
 WORKDIR /workspace
 COPY docker/colcon-defaults.yaml /colcon-defaults.yaml
