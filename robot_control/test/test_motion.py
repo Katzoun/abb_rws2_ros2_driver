@@ -7,6 +7,8 @@ clock the test moves by hand so a timeout can be reached instantly.
 import json
 
 import pytest
+from builtin_interfaces.msg import Time
+from geometry_msgs.msg import Pose, PoseArray
 
 from robot_control import robot_controller_node as N
 from robot_control.robot_controller_node import RobotControllerNode as Node
@@ -71,10 +73,12 @@ class FakeRWS:
         self.completes_after = completes_after  # poll at which it reports done
         self.moves = moves  # moves_done per poll
         self.sent = []
+        self.writes = []
         self.polls = 0
         self.request_id = 0
 
     def set_rapid_symbol_raw(self, value, symbol, module):
+        self.writes.append((symbol, value))
         if symbol == "request_id":
             self.request_id = int(value)
         return ("OK", 204)
@@ -119,8 +123,8 @@ class FakeRWS:
 class FakeHandle:
     """A goal handle that can turn cancelled on a chosen read."""
 
-    def __init__(self, waypoints, cancel_from=None):
-        self.request = Goal(waypoints)
+    def __init__(self, waypoints, cancel_from=None, tool="", wobj=""):
+        self.request = Goal(waypoints, tool, wobj)
         self.outcome = None
         self._reads = 0
         self._cancel_from = cancel_from
@@ -144,13 +148,15 @@ class FakeHandle:
 
 
 class Goal:
-    def __init__(self, count):
+    def __init__(self, count, tool="", wobj=""):
         self.waypoints = [
             RobotJoints(**{f"j{axis}": float(i) for axis in range(1, 7)})
             for i in range(count)
         ]
         self.motion_command = "MoveAbsJ"
         self.speed = "100"
+        self.tool = tool
+        self.wobj = wobj
 
 
 class FakeNode:
@@ -161,6 +167,15 @@ class FakeNode:
         self._logged_in = True
         self._request_id = 0
 
+    def get_clock(self):
+        return self
+
+    def now(self):
+        return self
+
+    def to_msg(self):
+        return Time()
+
     def _param_int(self, key):
         return 1
 
@@ -170,8 +185,11 @@ class FakeNode:
             "motion.stall_timeout_s": 10.0,
             "motion.poll_interval_s": 0.5,
             "motion.start_timeout_s": 5.0,
+            "dipc.health_check_s": 0.5,
         }.get(key, 0.0)
 
+    _rapid_alive = Node._rapid_alive
+    _rapid_running_quiet = Node._rapid_running_quiet
     _start_routine = Node._start_routine
     _end_buffer_routine = Node._end_buffer_routine
     _read_joints = Node._read_joints
@@ -181,10 +199,10 @@ class FakeNode:
     _read_num = Node._read_num
 
 
-def run(waypoints=3, cancel_from=None, **controller):
+def run(waypoints=3, cancel_from=None, tool="", wobj="", **controller):
     """One whole goal against a scripted controller."""
     rws = FakeRWS(**controller)
-    handle = FakeHandle(waypoints, cancel_from=cancel_from)
+    handle = FakeHandle(waypoints, cancel_from=cancel_from, tool=tool, wobj=wobj)
     result = Node._execute_joint_array(FakeNode(rws), handle)
     return result, handle.outcome, rws
 
@@ -335,3 +353,179 @@ def test_a_rejected_send_still_terminates_then_aborts():
     assert outcome == "aborted"
     assert userdefs(rws) == ["1", "1", "2"]
     assert "DIPC send failed" in result.message
+
+
+# --- a stopped RAPID is noticed while sending, not after -------------------
+
+
+class StoppingRWS(FakeRWS):
+    """RAPID falls over partway through the send, as it does on a bad point.
+
+    Sending costs time on a real controller, so the clock moves here too -
+    that is what lets the health check come due.
+    """
+
+    def __init__(self, stops_after=1, **kwargs):
+        super().__init__(**kwargs)
+        self.stops_after = stops_after
+
+    def send_dipc_message(self, message, userdef):
+        CLOCK.now += 0.12  # roughly one DIPC round-trip
+        if len(self.sent) >= self.stops_after:
+            self.running = False
+        return super().send_dipc_message(message, userdef)
+
+
+def test_a_rapid_that_stops_mid_send_ends_the_goal_without_sending_the_rest():
+    """The whole point of the health check: fail in a moment, not in 30 s."""
+    rws = StoppingRWS(stops_after=1, states=["2"] * 8, completes_after=None)
+    handle = FakeHandle(249)
+    result = Node._execute_joint_array(FakeNode(rws), handle)
+
+    assert handle.outcome == "aborted"
+    # Without the check every one of the 249 points would have gone out first.
+    assert len(rws.sent) < 10
+    assert "RAPID stopped while sending" in result.message
+
+
+def test_the_send_error_survives_the_wait_message():
+    rws = StoppingRWS(stops_after=1, states=["2"] * 8, completes_after=None)
+    result = Node._execute_joint_array(FakeNode(rws), FakeHandle(20))
+
+    # The wait fails too, and used to be the only thing reported.
+    assert "RAPID stopped while sending" in result.message
+    assert "RAPID stopped before the trajectory finished" in result.message
+
+
+def test_releasing_the_buffer_is_skipped_once_rapid_has_stopped():
+    node = FakeNode(FakeRWS(running=False))
+    Node._end_buffer_routine(node, node.RWS, "jointtarget;[[0]]", 100, 0.25)
+    assert node.RWS.sent == []
+
+
+def test_a_running_rapid_still_gets_its_terminator():
+    node = FakeNode(FakeRWS(running=True))
+    Node._end_buffer_routine(node, node.RWS, "jointtarget;[[0]]", 100, 0.25)
+    assert userdefs(node.RWS) == ["2"]
+
+
+def test_an_unreadable_running_state_does_not_abort_the_send():
+    """One failed read is not a stopped robot."""
+
+    class GrumpyRWS(FakeRWS):
+        def is_running(self):
+            raise RuntimeError("controller said 503")
+
+    node = FakeNode(GrumpyRWS())
+    alive, _ = Node._rapid_alive(node, node.RWS, 0.0, 0.0)
+    assert alive is True
+
+    # And the terminator still goes out, rather than being skipped on a guess.
+    Node._end_buffer_routine(node, node.RWS, "jointtarget;[[0]]", 100, 0.25)
+    assert userdefs(node.RWS) == ["2"]
+
+
+# --- tool and workobject ----------------------------------------------------
+
+
+def symbol_writes(rws):
+    return dict(rws.writes)
+
+
+def test_tool_and_wobj_names_reach_the_controller():
+    _result, _outcome, rws = run(
+        waypoints=3, tool="tooltuzka", wobj="wobjtabletop", completes_after=1
+    )
+    written = symbol_writes(rws)
+    assert written["tool_name_input"] == '"tooltuzka"'
+    assert written["wobj_name_input"] == '"wobjtabletop"'
+
+
+def test_an_empty_tool_is_still_written():
+    """Skipping the write would leave the last goal's tool standing."""
+    _result, _outcome, rws = run(waypoints=3, completes_after=1)
+    written = symbol_writes(rws)
+    assert written["tool_name_input"] == '""'
+    assert written["wobj_name_input"] == '""'
+
+
+def test_the_tool_goes_out_before_the_routine_starts():
+    _result, _outcome, rws = run(waypoints=3, completes_after=1)
+    symbols = [symbol for symbol, _ in rws.writes]
+    assert symbols.index("tool_name_input") < symbols.index("current_state")
+    assert symbols.index("wobj_name_input") < symbols.index("current_state")
+
+
+def test_a_rejected_tool_names_all_three_in_the_message():
+    result, outcome, _rws = run(
+        waypoints=3,
+        tool="nosuchtool",
+        states=["0"] * 8,
+        accept=False,
+        reject=True,
+        completes_after=None,
+    )
+    assert outcome == "aborted"
+    assert "nosuchtool" in result.message
+    assert "rejected" in result.message
+
+
+@pytest.mark.parametrize("name", ['t"Pen', "tool;drop", "tool name", "9tool", "a" * 33])
+def test_names_that_would_break_the_symbol_write_are_not_names(name):
+    assert not N.valid_rapid_name(name)
+
+
+@pytest.mark.parametrize("name", ["", "tooltuzka", "wobj_dock1", "T0"])
+def test_the_names_actually_on_the_controller_pass(name):
+    assert N.valid_rapid_name(name)
+
+
+# --- the cartesian path, which had no coverage at all -----------------------
+
+
+class PoseGoal:
+    def __init__(self, count, tool="", wobj=""):
+        self.path = PoseArray(poses=[Pose() for _ in range(count)])
+        self.motion_command = "MoveL"
+        self.speed = "100"
+        self.tool = tool
+        self.wobj = wobj
+
+
+class PoseHandle(FakeHandle):
+    def __init__(self, count, cancel_from=None, tool="", wobj=""):
+        super().__init__(0, cancel_from=cancel_from)
+        self.request = PoseGoal(count, tool, wobj)
+
+
+def run_pose(count=3, **controller):
+    rws = FakeRWS(**controller)
+    handle = PoseHandle(count)
+    return Node._execute_pose_array(FakeNode(rws), handle), handle.outcome, rws
+
+
+def test_a_cartesian_path_finishes_when_the_robot_confirms():
+    result, outcome, rws = run_pose(3, states=["2"] * 8, completes_after=3)
+    assert outcome == "succeeded"
+    assert result.success
+    assert userdefs(rws) == ["1", "1", "2"]
+
+
+def test_a_cartesian_path_stops_sending_once_rapid_stops():
+    rws = StoppingRWS(stops_after=1, states=["2"] * 8, completes_after=None)
+    handle = PoseHandle(249)
+    result = Node._execute_pose_array(FakeNode(rws), handle)
+
+    assert handle.outcome == "aborted"
+    assert len(rws.sent) < 10
+    assert "RAPID stopped while sending at pose" in result.message
+
+
+def test_a_cartesian_goal_passes_its_tool_and_wobj_on():
+    rws = FakeRWS(states=["2"] * 8, completes_after=1)
+    handle = PoseHandle(3, tool="tooltuzka", wobj="wobjtabletop")
+    Node._execute_pose_array(FakeNode(rws), handle)
+
+    written = symbol_writes(rws)
+    assert written["tool_name_input"] == '"tooltuzka"'
+    assert written["wobj_name_input"] == '"wobjtabletop"'

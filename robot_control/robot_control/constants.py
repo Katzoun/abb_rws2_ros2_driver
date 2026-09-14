@@ -37,6 +37,10 @@ class RobotControllerConstants:
         ROUTINE_NAME = "routine_name_input"
         SPEED = "speednum"
         CURRENT_STATE = "current_state"
+        # Which tooldata and wobjdata the buffer routine moves against, by name.
+        # Empty means the routine keeps its own default.
+        TOOL_NAME = "tool_name_input"
+        WOBJ_NAME = "wobj_name_input"
         # The handshake in TRobUser: we write REQUEST_ID, the routine echoes it
         # back on entry and again once the robot has arrived.
         REQUEST_ID = "request_id"

@@ -32,6 +32,8 @@ robot_controller:
     dipc:
       retry_max: 100
       retry_delay_s: 0.25
+ 
+      health_check_s: 0.5
 
     # Sending a point is not executing it, so a goal finishes only once the
     # robot is done. These bound the waiting.

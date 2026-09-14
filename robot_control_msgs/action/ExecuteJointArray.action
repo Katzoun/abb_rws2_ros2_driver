@@ -9,6 +9,12 @@
 string motion_command
 # TCP speed in mm/s, as text. RAPID clamps it to 5-1000.
 string speed
+# Name of a tooldata on the controller, for example "tooltuzka". Empty leaves
+# the tool to RAPID, which uses whichever one it last picked up.
+string tool
+# Name of a wobjdata on the controller, for example "wobjtabletop". Empty leaves
+# the workobject to RAPID, which uses wobj0 - the robot base.
+string wobj
 # Axis angles in radians, six per waypoint.
 robot_control_msgs/RobotJoints[] waypoints
 ---

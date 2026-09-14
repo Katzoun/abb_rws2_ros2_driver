@@ -10,6 +10,12 @@
 string motion_command
 # TCP speed in mm/s, as text. RAPID clamps it to 5-1000.
 string speed
+# Name of a tooldata on the controller, for example "tooltuzka". Empty leaves
+# the tool to RAPID, which uses whichever one it last picked up.
+string tool
+# Name of a wobjdata on the controller, for example "wobjtabletop". Empty leaves
+# the workobject to RAPID, which uses wobj0 - the robot base.
+string wobj
 # Poses in metres, the ROS convention, converted to the millimetres a robtarget
 # holds. Orientation is a ROS quaternion (x,y,z,w) and becomes ABB's (w,x,y,z);
 # the arm configuration is left to the controller.
