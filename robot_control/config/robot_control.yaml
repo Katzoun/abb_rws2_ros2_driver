@@ -25,7 +25,7 @@ robot_controller:
       send_keepalive: true
       keepalive_interval: 120.0
       send_joint_states: true
-      joint_states_hz: 8.0
+      joint_states_hz: 4.0
 
     # The RAPID buffer queue answers 500 while it is full and the robot has not
     # drained it yet. That is back-pressure, not an error, so we wait and retry.

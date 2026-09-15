@@ -136,7 +136,7 @@ PARAMETER_DECLARATIONS = [
     ),
     (
         ParamKeys.JOINT_STATES_HZ,
-        8.0,
+        4.0,
         ParameterDescriptor(
             description="Joint states publishing frequency in Hz",
             type=Parameter.Type.DOUBLE.value,
