@@ -1,23 +1,20 @@
 # Parameters for the robot controller node.
 
-# This file is read again on every configure, so changing a value means editing
-# it here and taking the node back through the lifecycle. The process stays up:
+# Read once, when the launch file starts the node. Changing a value here means
+# editing it and restarting the node; a lifecycle cycle alone will not pick it
+# up, and anything set with `ros2 param set` before configuring stays.
 #
-#   ros2 lifecycle set /robot_controller deactivate
-#   ros2 lifecycle set /robot_controller cleanup
-#   ros2 lifecycle set /robot_controller configure
-#   ros2 lifecycle set /robot_controller activate
-#
-# It also overwrites anything set with `ros2 param set`.
+# For the opposite - the file re-read on every configure, overwriting whatever
+# was set by hand - give the node its own path in `config_file`.
 # Change the key below if you rename the node.
 
 robot_controller:
   ros__parameters:
 
     connection:
-      ip_address: 192.168.50.10
+      ip_address: 192.168.0.37
       # 80 on the virtual controller, 443 on the physical one
-      port: 80
+      port: 443
       username: Admin
       password: robotics
 

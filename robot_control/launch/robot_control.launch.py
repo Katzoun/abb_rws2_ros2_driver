@@ -13,6 +13,10 @@ transition, not a crashed node.
 All settings come from the YAML below, which is installed into the image. There
 are no launch arguments for the connection: the robot's configuration belongs
 to the config file, not to the environment.
+
+The file is read once, here at start-up, so anything set with `ros2 param set`
+before configuring survives the transition. To have the node re-read the file
+on every configure instead, point its `config_file` parameter at the YAML.
 """
 
 import os
@@ -37,7 +41,7 @@ def generate_launch_description():
         name="robot_controller",
         namespace="",
         output="screen",
-        parameters=[config, {"config_file": config}],
+        parameters=[config],
         emulate_tty=True,
     )
 
